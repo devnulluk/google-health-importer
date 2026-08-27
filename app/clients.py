@@ -4,6 +4,11 @@ from typing import Any, AsyncIterator
 import httpx
 
 
+def google_timestamp(value: datetime) -> str:
+    """Format a UTC timestamp in the form required by Google Health."""
+    return value.isoformat().replace("+00:00", "Z")
+
+
 class GoogleHealthClient:
     base_url = "https://health.googleapis.com/v4/users/me"
 
@@ -14,7 +19,11 @@ class GoogleHealthClient:
         page_token = None
         async with httpx.AsyncClient(timeout=60) as client:
             while True:
-                params = {"startTime": start.isoformat(), "endTime": end.isoformat(), "pageSize": "1000"}
+                params = {
+                    "startTime": google_timestamp(start),
+                    "endTime": google_timestamp(end),
+                    "pageSize": "1000",
+                }
                 if page_token:
                     params["pageToken"] = page_token
                 response = await client.get(
