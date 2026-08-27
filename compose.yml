@@ -1,0 +1,22 @@
+services:
+  google-health-importer:
+    build: .
+    environment:
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set in Portainer}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?Set in Portainer}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-https://healthdata-import.devnull.co.uk/oauth/callback}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set in Portainer}
+      OPEN_WEARABLES_URL: https://healthdata-api.devnull.co.uk
+      OPEN_WEARABLES_USER_ID: ${OPEN_WEARABLES_USER_ID:?Set in Portainer}
+      OPEN_WEARABLES_API_KEY: ${OPEN_WEARABLES_API_KEY:?Set in Portainer}
+      APP_SESSION_SECRET: ${APP_SESSION_SECRET:?Set in Portainer}
+      APP_ADMIN_USER: ${APP_ADMIN_USER:-mark}
+      INITIAL_SYNC_DAYS: ${INITIAL_SYNC_DAYS:-30}
+    volumes:
+      - google_health_importer_data:/data
+    ports:
+      - "8010:8080"
+    restart: unless-stopped
+
+volumes:
+  google_health_importer_data:

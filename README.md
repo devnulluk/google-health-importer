@@ -1,0 +1,15 @@
+# Google Health importer
+
+A small, private bridge from Google Health API to Open Wearables 0.6.3. It uses Google's read-only scopes and Open Wearables' supported Google SDK ingestion endpoint. It does not access the Open Wearables database.
+
+## First deployment
+
+1. Build the stack on Mobius from `compose.yml` and add the environment values in Portainer.
+2. Point a Cloudflare tunnel hostname (planned: `healthdata-import.devnull.co.uk`) at `http://10.30.30.2:8010`.
+3. Create the Google OAuth web client only then, with callback `https://healthdata-import.devnull.co.uk/oauth/callback`.
+4. Put the new client ID and secret directly into Portainer; do not store them in Obsidian or Git.
+5. Visit `/oauth/start` once, sign in with `APP_ADMIN_USER` and `APP_SESSION_SECRET`, consent, then POST `/sync` using the same HTTP Basic credentials.
+
+Generate `TOKEN_ENCRYPTION_KEY` with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Generate a long, unique `APP_SESSION_SECRET` with a password manager; it protects the connection, status, and sync controls.
+
+The encrypted state volume contains the Google refresh token and incremental checkpoint. Logs contain counts only, never health values or tokens.
