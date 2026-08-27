@@ -1,4 +1,7 @@
+import asyncio
+import logging
 import secrets
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -12,7 +15,22 @@ from app.config import get_settings
 from app.mapping import METRICS, metric_record, sleep_records
 from app.store import StateStore
 
-app = FastAPI(title="Google Health Importer", docs_url=None, redoc_url=None)
+logger = logging.getLogger("google-health-importer")
+sync_lock = asyncio.Lock()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    task = asyncio.create_task(scheduled_sync_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(title="Google Health Importer", docs_url=None, redoc_url=None, lifespan=lifespan)
 basic = HTTPBasic()
 SCOPES = " ".join([
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
@@ -99,25 +117,98 @@ async def access_token(refresh_token: str) -> str:
     return response.json()["access_token"]
 
 
-@app.post("/sync", dependencies=[Depends(require_admin)])
-async def sync() -> dict[str, int | str]:
+def at_or_after(value: str | None, cutoff: datetime | None) -> bool:
+    if cutoff is None:
+        return True
+    if not value:
+        return False
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed >= cutoff
+
+
+async def send_batch(records: list[dict], sleep: list[dict], sync_time: datetime) -> None:
+    settings = get_settings()
+    payload = {
+        "provider": "google",
+        "sdkVersion": "google-health-importer/0.2.0",
+        "syncTimestamp": sync_time.isoformat(),
+        "data": {"records": records, "sleep": sleep, "workouts": []},
+    }
+    await send_to_open_wearables(
+        settings.open_wearables_url,
+        settings.open_wearables_user_id,
+        settings.open_wearables_api_key.get_secret_value(),
+        payload,
+    )
+
+
+async def run_sync() -> dict[str, int | str]:
     settings = get_settings()
     saved = store().load()
     if not saved.get("refresh_token"):
         raise HTTPException(409, "Connect Google Health first")
     end = datetime.now(timezone.utc)
-    start = datetime.fromisoformat(saved["last_sync"]) - timedelta(minutes=10) if saved.get("last_sync") else end - timedelta(days=settings.initial_sync_days)
+    cutoff = (
+        datetime.fromisoformat(saved["last_sync"]) - timedelta(minutes=10)
+        if saved.get("last_sync")
+        else None
+    )
     client = GoogleHealthClient(await access_token(saved["refresh_token"]))
-    records, sleep = [], []
+    record_count = sleep_count = 0
     for data_type in METRICS:
-        async for point in client.list_points(data_type, start, end):
+        records: list[dict] = []
+        async for point in client.list_points(data_type):
             mapped = metric_record(data_type, point)
-            if mapped:
+            if mapped and at_or_after(mapped.get("endDate") or mapped.get("startDate"), cutoff):
                 records.append(mapped)
-    async for point in client.list_points("sleep", start, end):
-        sleep.extend(sleep_records(point))
-    payload = {"provider": "google", "sdkVersion": "google-health-importer/0.1.0", "syncTimestamp": end.isoformat(), "data": {"records": records, "sleep": sleep, "workouts": []}}
-    await send_to_open_wearables(settings.open_wearables_url, settings.open_wearables_user_id, settings.open_wearables_api_key.get_secret_value(), payload)
+                if len(records) >= settings.sync_batch_size:
+                    await send_batch(records, [], end)
+                    record_count += len(records)
+                    records = []
+        if records:
+            await send_batch(records, [], end)
+            record_count += len(records)
+    sleep: list[dict] = []
+    async for point in client.list_points("sleep"):
+        for stage in sleep_records(point):
+            if at_or_after(stage.get("endDate") or stage.get("startDate"), cutoff):
+                sleep.append(stage)
+                if len(sleep) >= settings.sync_batch_size:
+                    await send_batch([], sleep, end)
+                    sleep_count += len(sleep)
+                    sleep = []
+    if sleep:
+        await send_batch([], sleep, end)
+        sleep_count += len(sleep)
     saved["last_sync"] = end.isoformat()
     store().save(saved)
-    return {"status": "queued", "records": len(records), "sleep_stages": len(sleep)}
+    return {"status": "complete", "records": record_count, "sleep_stages": sleep_count}
+
+
+async def guarded_sync() -> dict[str, int | str]:
+    async with sync_lock:
+        return await run_sync()
+
+
+async def scheduled_sync_loop() -> None:
+    settings = get_settings()
+    delay = max(settings.sync_interval_minutes, 1) * 60
+    backoff = delay
+    while True:
+        await asyncio.sleep(backoff)
+        if sync_lock.locked() or not store().load().get("refresh_token"):
+            backoff = delay
+            continue
+        try:
+            await guarded_sync()
+            backoff = delay
+        except Exception:
+            logger.exception("Scheduled Google Health sync failed")
+            backoff = min(max(backoff * 2, delay), 6 * 60 * 60)
+
+
+@app.post("/sync", dependencies=[Depends(require_admin)])
+async def sync() -> dict[str, int | str]:
+    return await guarded_sync()

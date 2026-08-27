@@ -1,9 +1,13 @@
-from datetime import datetime, timezone
-
-from app.clients import google_timestamp
+from app.clients import google_list_params
 
 
-def test_google_timestamp_uses_utc_z_suffix() -> None:
-    value = datetime(2026, 8, 28, 12, 34, 56, 123456, tzinfo=timezone.utc)
+def test_google_list_params_only_use_supported_fields() -> None:
+    assert google_list_params("heart-rate") == {"pageSize": "10000"}
+    assert google_list_params("heart-rate", "next") == {
+        "pageSize": "10000",
+        "pageToken": "next",
+    }
 
-    assert google_timestamp(value) == "2026-08-28T12:34:56.123456Z"
+
+def test_sleep_uses_google_maximum_page_size() -> None:
+    assert google_list_params("sleep") == {"pageSize": "25"}

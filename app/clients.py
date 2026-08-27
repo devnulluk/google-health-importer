@@ -1,12 +1,14 @@
-from datetime import datetime
 from typing import Any, AsyncIterator
 
 import httpx
 
 
-def google_timestamp(value: datetime) -> str:
-    """Format a UTC timestamp in the form required by Google Health."""
-    return value.isoformat().replace("+00:00", "Z")
+def google_list_params(data_type: str, page_token: str | None = None) -> dict[str, str]:
+    """Build parameters supported by the Google Health v4 list endpoint."""
+    params = {"pageSize": "25" if data_type in {"exercise", "sleep"} else "10000"}
+    if page_token:
+        params["pageToken"] = page_token
+    return params
 
 
 class GoogleHealthClient:
@@ -15,20 +17,13 @@ class GoogleHealthClient:
     def __init__(self, access_token: str) -> None:
         self.headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
 
-    async def list_points(self, data_type: str, start: datetime, end: datetime) -> AsyncIterator[dict[str, Any]]:
+    async def list_points(self, data_type: str) -> AsyncIterator[dict[str, Any]]:
         page_token = None
         async with httpx.AsyncClient(timeout=60) as client:
             while True:
-                params = {
-                    "startTime": google_timestamp(start),
-                    "endTime": google_timestamp(end),
-                    "pageSize": "1000",
-                }
-                if page_token:
-                    params["pageToken"] = page_token
                 response = await client.get(
                     f"{self.base_url}/dataTypes/{data_type}/dataPoints",
-                    headers=self.headers, params=params,
+                    headers=self.headers, params=google_list_params(data_type, page_token),
                 )
                 response.raise_for_status()
                 payload = response.json()

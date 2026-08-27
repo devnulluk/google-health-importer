@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     open_wearables_api_key: SecretStr
     app_session_secret: SecretStr
     app_admin_user: str = "mark"
-    initial_sync_days: int = 30
+    sync_interval_minutes: int = 15
+    sync_batch_size: int = 1000
     state_path: str = "/data/state.json"
 
 

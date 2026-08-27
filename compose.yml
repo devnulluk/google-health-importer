@@ -11,7 +11,8 @@ services:
       OPEN_WEARABLES_API_KEY: ${OPEN_WEARABLES_API_KEY:?Set in Portainer}
       APP_SESSION_SECRET: ${APP_SESSION_SECRET:?Set in Portainer}
       APP_ADMIN_USER: ${APP_ADMIN_USER:-mark}
-      INITIAL_SYNC_DAYS: ${INITIAL_SYNC_DAYS:-30}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
+      SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-1000}
     volumes:
       - google_health_importer_data:/data
     ports:
