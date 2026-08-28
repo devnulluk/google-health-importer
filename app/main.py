@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import secrets
 from contextlib import asynccontextmanager, suppress
@@ -7,7 +8,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status as http_status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.clients import GoogleHealthClient, send_to_open_wearables
@@ -35,8 +36,33 @@ basic = HTTPBasic()
 SCOPES = " ".join([
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
     "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
-    "https://www.googleapis.com/auth/googlehealth.profile.readonly",
 ])
+
+HOME_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Google Health Importer</title><style>
+body{font:16px system-ui,sans-serif;max-width:760px;margin:5rem auto;padding:0 1.5rem;color:#172033;background:#f7f9fc}
+main{background:white;padding:2.5rem;border-radius:20px;box-shadow:0 12px 40px #14213d18}h1{margin-top:0;color:#155eef}
+a{color:#155eef}code{background:#eef3ff;padding:.15rem .35rem;border-radius:.3rem}.links{display:flex;gap:1rem;flex-wrap:wrap}
+</style></head><body><main><h1>Google Health Importer</h1>
+<p>A self-hosted, read-only bridge that copies authorised health metrics and sleep data from Google Health into an Open Wearables instance controlled by the user.</p>
+<p>The importer does not sell data, use it for advertising, or train AI models. Administrative and synchronisation controls require HTTP Basic authentication.</p>
+<p class="links"><a href="/privacy">Privacy policy</a><a href="https://github.com/devnulluk/google-health-importer">Source code</a></p>
+</main></body></html>"""
+
+PRIVACY_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy policy · Google Health Importer</title><style>
+body{font:16px/1.6 system-ui,sans-serif;max-width:820px;margin:3rem auto;padding:0 1.5rem;color:#172033}h1,h2{color:#155eef}a{color:#155eef}
+</style></head><body><h1>Privacy policy</h1><p><strong>Effective 29 August 2026.</strong></p>
+<p>This self-hosted application accesses Google user data only after the user grants OAuth consent. It requests read-only access to Google Health health metrics and measurements and sleep data.</p>
+<h2>How data is used</h2><p>Authorised data is used solely to provide the user-facing feature of copying the user's health history into the Open Wearables destination selected and controlled by the operator. It is not used for advertising, profiling, sale, surveillance, or training general-purpose AI models.</p>
+<h2>Storage and sharing</h2><p>The importer stores an encrypted Google refresh token, a last-sync checkpoint, and aggregate progress counts in its private persistent volume. Health records pass through memory in batches and are sent only to the configured Open Wearables instance; the importer does not retain a second health-record database. No Google user data is shared with unrelated third parties.</p>
+<h2>Retention, deletion, and revocation</h2><p>The encrypted connection state is retained until the operator uses the authenticated <code>POST /disconnect</code> control or removes the persistent volume. Disconnecting revokes the Google token and deletes importer state. Records already copied into Open Wearables are controlled by that separate self-hosted service and must be deleted there if desired.</p>
+<h2>Security</h2><p>The service is intended to run behind HTTPS. OAuth credentials, API keys and administrator credentials are supplied as deployment secrets, never embedded in source. Administrative routes require authentication, tokens are encrypted at rest, and logs contain aggregate counts rather than health values.</p>
+<h2>Google API Services User Data Policy</h2><p>The application's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including its Limited Use requirements, and the <a href="https://developers.google.com/health/policies/health-api-developer-user-data-policy">Google Health API Developer and User Data Policy</a>.</p>
+<h2>Contact</h2><p>Questions and deletion requests for this deployed instance can be sent to <a href="mailto:{{CONTACT}}">{{CONTACT}}</a>. Security issues in the software can be reported using the repository's security policy.</p>
+<p><a href="/">Return to homepage</a></p></body></html>"""
 
 
 def store() -> StateStore:
@@ -61,6 +87,17 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(basic)) -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/", response_class=HTMLResponse)
+def homepage() -> str:
+    return HOME_HTML
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy() -> str:
+    contact = html.escape(get_settings().public_contact_email, quote=True)
+    return PRIVACY_HTML.replace("{{CONTACT}}", contact)
 
 
 @app.get("/status", dependencies=[Depends(require_admin)])
@@ -119,6 +156,23 @@ async def access_token(refresh_token: str) -> str:
         })
         response.raise_for_status()
     return response.json()["access_token"]
+
+
+@app.post("/disconnect", dependencies=[Depends(require_admin)])
+async def disconnect() -> dict[str, str]:
+    state_store = store()
+    saved = state_store.load()
+    refresh_token = saved.get("refresh_token")
+    if refresh_token:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                "https://oauth2.googleapis.com/revoke",
+                params={"token": refresh_token},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            response.raise_for_status()
+    state_store.delete()
+    return {"status": "disconnected", "local_state": "deleted"}
 
 
 def at_or_after(value: str | None, cutoff: datetime | None) -> bool:

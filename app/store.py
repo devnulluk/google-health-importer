@@ -22,3 +22,7 @@ class StateStore:
         temporary.write_bytes(self.cipher.encrypt(json.dumps(state).encode()))
         os.chmod(temporary, 0o600)
         temporary.replace(self.path)
+
+    def delete(self) -> None:
+        """Remove all importer state, including the encrypted refresh token."""
+        self.path.unlink(missing_ok=True)

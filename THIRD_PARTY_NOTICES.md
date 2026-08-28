@@ -16,3 +16,10 @@ container builds obtain them from their normal distribution channels.
 The Google Health API is a hosted service, not bundled software. Use of it is
 subject to Google's API terms, OAuth policies, and API Services User Data
 Policy in addition to this project's MIT licence.
+
+The repository distributes source and build instructions, not prebuilt copies
+of these packages. A party publishing a container image should generate an
+SBOM for the exact build, preserve all required copyright/licence notices for
+direct and transitive packages, and account for the Python and Debian base
+image components. GitHub renders the README's Mermaid diagrams; Mermaid is not
+bundled with this project. The banner artwork is original to this project.

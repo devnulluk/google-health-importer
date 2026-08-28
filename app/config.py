@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     open_wearables_user_id: str
     open_wearables_api_key: SecretStr
     app_session_secret: SecretStr
+    public_contact_email: str
     app_admin_user: str = "mark"
     sync_interval_minutes: int = 15
     sync_batch_size: int = 1000

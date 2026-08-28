@@ -1,19 +1,199 @@
-# Google Health importer
+<p align="center"><img src="docs/assets/banner.svg" alt="Google Health Importer — own your health history" width="900"></p>
 
-A small, private bridge from Google Health API to Open Wearables 0.6.3. It uses Google's read-only scopes and Open Wearables' supported Google SDK ingestion endpoint. It does not access the Open Wearables database.
+<p align="center">
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-155eef.svg"></a>
+  <img alt="Python 3.13+" src="https://img.shields.io/badge/python-3.13%2B-3776ab.svg">
+  <img alt="Self-hosted" src="https://img.shields.io/badge/deployment-self--hosted-12b76a.svg">
+  <img alt="Google scopes read-only" src="https://img.shields.io/badge/Google_scopes-read--only-f79009.svg">
+</p>
 
-The first sync imports all available authorised Google Health history in batches. Later syncs still enumerate Google's catalogue because the v4 API has no date-range filter, but only records newer than the saved checkpoint (with a ten-minute overlap) are sent to Open Wearables. Stable record IDs make retries duplicate-safe.
+# Google Health Importer
 
-After connection, the importer runs automatically every 15 minutes. Runs never overlap, and temporary failures use an exponential backoff capped at six hours. `SYNC_INTERVAL_MINUTES` and `SYNC_BATCH_SIZE` can be overridden in Portainer.
+A small, auditable bridge that preserves your Google Health history in an
+[Open Wearables](https://github.com/the-momentum/open-wearables) instance you
+control. It is person-centric rather than device-centric: Google, Fitbit and
+future devices are data sources; the durable asset is your health history.
 
-## First deployment
+> [!IMPORTANT]
+> This is independent community software. It is not affiliated with or
+> endorsed by Google, Fitbit, or Open Wearables. It is not a medical device and
+> does not provide medical advice.
 
-1. Build the stack on Mobius from `compose.yml` and add the environment values in Portainer.
-2. Point a secure reverse-proxy hostname at the importer's port (the compose example publishes port `8010`).
-3. Create the Google OAuth web client only then, using `https://your-importer.example/oauth/callback` as the callback pattern.
-4. Put the new client ID and secret directly into Portainer; do not store them in Obsidian or Git.
-5. Visit `/oauth/start` once, sign in with `APP_ADMIN_USER` and `APP_SESSION_SECRET`, consent, then POST `/sync` using the same HTTP Basic credentials to start the initial import immediately. Scheduled syncs begin automatically after connection.
+## Why it exists
 
-Generate `TOKEN_ENCRYPTION_KEY` with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Generate a long, unique `APP_SESSION_SECRET` with a password manager; it protects the connection, status, and sync controls.
+- Own and preserve health data independently of a particular device vendor.
+- Import complete authorised history, then keep it updated automatically.
+- Use only narrow, read-only Google Health permissions.
+- Keep credentials encrypted and health values out of logs.
+- Use Open Wearables' supported ingestion API—never modify its database.
 
-The encrypted state volume contains the Google refresh token, incremental checkpoint, and aggregate sync progress. The authenticated `/status` endpoint reports the current data type and accepted counts without returning health values or tokens.
+## Architecture
+
+```mermaid
+flowchart LR
+    U([You]) -->|OAuth consent| G[Google Health API]
+    G -->|read-only metrics & sleep| I[Google Health Importer]
+    I -->|validated batches| O[Open Wearables API]
+    O --> D[(Your health-data store)]
+    A[Authenticated admin] -->|status / sync / disconnect| I
+    I --> S[(Encrypted token,<br/>checkpoint & counts)]
+    classDef source fill:#e8f0fe,stroke:#4285f4,color:#172033
+    classDef bridge fill:#eef4ff,stroke:#155eef,color:#172033
+    classDef owned fill:#eafbf3,stroke:#12b76a,color:#172033
+    class G source
+    class I bridge
+    class O,D,S owned
+```
+
+| Data | Importer | Open Wearables | Logs |
+| --- | --- | --- | --- |
+| Google refresh token | Encrypted at rest | No | Never |
+| Health records | In memory while batching | Yes | Never |
+| Last-sync checkpoint | Encrypted at rest | No | No |
+| Progress | Aggregate counts | Sync metadata | Aggregate only |
+
+## Synchronisation lifecycle
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Importer
+    participant Google as Google Health
+    participant OW as Open Wearables
+    User->>Importer: Connect with Google
+    Importer->>Google: Request read-only consent
+    Google-->>Importer: Refresh token
+    loop Each configured interval
+        Importer->>Google: Enumerate authorised history
+        Google-->>Importer: Paginated data points
+        Importer->>Importer: Map, validate and filter checkpoint overlap
+        Importer->>OW: Stable-ID batches
+        OW-->>Importer: Accepted
+        Importer->>Importer: Save checkpoint and aggregate progress
+    end
+```
+
+The first successful sync imports all available authorised history. Later runs
+still enumerate Google's catalogue because the v4 endpoint has no date-range
+filter, but send only data newer than the saved checkpoint with a ten-minute
+overlap. Stable record IDs make retries duplicate-safe. Runs never overlap;
+temporary failures use exponential backoff capped at six hours.
+
+## Supported data
+
+- Heart rate and heart-rate variability (RMSSD)
+- Oxygen saturation
+- Daily resting heart rate and respiratory rate
+- Sleep stages
+
+The importer requests only these OAuth scopes:
+
+```text
+googlehealth.health_metrics_and_measurements.readonly
+googlehealth.sleep.readonly
+```
+
+## Quick start
+
+### 1. Prepare secrets
+
+Copy [`.env.example`](.env.example), generate unique secrets, and supply every
+required value through your deployment platform—not Git.
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+`TOKEN_ENCRYPTION_KEY` must remain stable for the persistent volume. Generate
+`APP_SESSION_SECRET` with a password manager. Set `PUBLIC_CONTACT_EMAIL` to a
+monitored address for privacy and deletion requests; it is displayed publicly
+on `/privacy`.
+
+### 2. Deploy behind HTTPS
+
+```bash
+docker compose up -d --build
+```
+
+The compose file publishes port `8010`; point a secure reverse proxy hostname
+at it.
+
+### 3. Configure Google OAuth
+
+Create a Google OAuth web client with callback:
+
+```text
+https://your-importer.example/oauth/callback
+```
+
+Set the OAuth homepage to `https://your-importer.example/` and privacy-policy
+URL to `https://your-importer.example/privacy`. Verify the domain in Google
+Search Console. Consent-screen scopes must exactly match the two read-only
+scopes above.
+
+### 4. Connect and observe
+
+Open `/oauth/start`, authenticate with `APP_ADMIN_USER` and
+`APP_SESSION_SECRET`, and grant consent. Administrative routes use the same
+HTTP Basic credentials:
+
+| Endpoint | Purpose | Authentication |
+| --- | --- | --- |
+| `GET /` | Public product homepage | No |
+| `GET /privacy` | Public privacy policy | No |
+| `GET /health` | Liveness check | No |
+| `GET /status` | Connection and aggregate progress | Yes |
+| `POST /sync` | Start a non-overlapping sync | Yes |
+| `POST /disconnect` | Revoke Google access and erase importer state | Yes |
+
+## Google policy readiness
+
+The software supports the technical parts of a compliant deployment:
+
+- a clear public homepage and privacy policy;
+- narrow read-only scopes with no unused profile permission;
+- disclosure of access, use, storage, transfer and retention;
+- no advertising, sale, surveillance or general-purpose AI training;
+- authenticated revocation and deletion of importer-held state;
+- encrypted refresh token and external deployment secrets;
+- aggregate logging without health values.
+
+The deployer remains responsible for steps code cannot perform: accurate
+operator/contact details, a verified owned domain, matching OAuth URLs, an
+appropriate consent flow, and Google verification when required. Personal-use
+apps with fewer than 100 users may be exempt from verification but remain
+subject to Google's data-use policies.
+
+Official references: [API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy),
+[Google Health API policy](https://developers.google.com/health/policies/health-api-developer-user-data-policy),
+[scopes guidance](https://developers.google.com/health/scopes), and
+[OAuth verification requirements](https://support.google.com/cloud/answer/13464321).
+The repository also includes an operator-facing
+[Google OAuth publication checklist](docs/GOOGLE_OAUTH_CHECKLIST.md).
+
+## Security and privacy
+
+- Never commit OAuth credentials, API keys, refresh tokens or populated state.
+- Use HTTPS and a strong, unique administrator password.
+- Protect and back up the persistent volume as sensitive data.
+- Rotate any credential disclosed in chat, logs or screenshots.
+- `POST /disconnect` revokes Google access and erases importer state; imported
+  records remain under the user's control in Open Wearables.
+
+Read [SECURITY.md](SECURITY.md) and the deployed `/privacy` page before inviting
+other users.
+
+## Development
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -e ".[test]"
+pytest
+```
+
+## Licence and acknowledgements
+
+Released under the [MIT Licence](LICENSE). Dependency and interoperability
+notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Open Wearables
+is an integration target; none of its source code is copied here.
