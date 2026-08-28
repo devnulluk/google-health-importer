@@ -38,4 +38,17 @@ async def send_to_open_wearables(url: str, user_id: str, api_key: str, payload: 
     headers = {"X-Open-Wearables-API-Key": api_key}
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(f"{url.rstrip('/')}/api/v1/sdk/users/{user_id}/sync", json=payload, headers=headers)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = ""
+            try:
+                body = response.json()
+                if isinstance(body, dict):
+                    detail = str(body.get("detail", ""))
+            except ValueError:
+                pass
+            suffix = f": {detail[:500]}" if detail else ""
+            raise RuntimeError(
+                f"Open Wearables rejected a sync batch with HTTP {response.status_code}{suffix}"
+            ) from exc

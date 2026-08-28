@@ -1,11 +1,17 @@
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 
 METRICS = {
     "heart-rate": ("heartRate", "beatsPerMinute", "HEART_RATE", "bpm"),
-    "heart-rate-variability": ("heartRateVariability", "rmssdMilliseconds", "HEART_RATE_VARIABILITY", "ms"),
+    "heart-rate-variability": (
+        "heartRateVariability",
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds",
+        "HEART_RATE_VARIABILITY",
+        "ms",
+    ),
     "oxygen-saturation": ("oxygenSaturation", "percentage", "OXYGEN_SATURATION", "%"),
     "daily-resting-heart-rate": ("dailyRestingHeartRate", "beatsPerMinute", "RESTING_HEART_RATE", "bpm"),
     "daily-respiratory-rate": ("dailyRespiratoryRate", "breathsPerMinute", "RESPIRATORY_RATE", "count/min"),
@@ -34,10 +40,24 @@ def source_info(point: dict[str, Any]) -> dict[str, Any]:
 def _times(body: dict[str, Any]) -> tuple[str, str, str | None]:
     sample = body.get("sampleTime", {})
     interval = body.get("interval", {})
-    start = sample.get("physicalTime") or interval.get("startTime") or body.get("date")
+    start = sample.get("physicalTime") or interval.get("startTime") or _date_timestamp(body.get("date"))
     end = sample.get("physicalTime") or interval.get("endTime") or start
     offset = sample.get("utcOffset") or interval.get("startUtcOffset")
     return start, end, offset
+
+
+def _date_timestamp(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return value if isinstance(value, str) else None
+    try:
+        return datetime(
+            int(value["year"]),
+            int(value["month"]),
+            int(value["day"]),
+            tzinfo=timezone.utc,
+        ).isoformat().replace("+00:00", "Z")
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def metric_record(data_type: str, point: dict[str, Any]) -> dict[str, Any] | None:

@@ -66,7 +66,11 @@ def health() -> dict[str, str]:
 @app.get("/status", dependencies=[Depends(require_admin)])
 def status() -> dict[str, object]:
     state = store().load()
-    return {"connected": bool(state.get("refresh_token")), "last_sync": state.get("last_sync")}
+    return {
+        "connected": bool(state.get("refresh_token")),
+        "last_sync": state.get("last_sync"),
+        "sync": state.get("sync", {"status": "idle"}),
+    }
 
 
 @app.get("/oauth/start", dependencies=[Depends(require_admin)])
@@ -150,6 +154,14 @@ async def run_sync() -> dict[str, int | str]:
     if not saved.get("refresh_token"):
         raise HTTPException(409, "Connect Google Health first")
     end = datetime.now(timezone.utc)
+    saved["sync"] = {
+        "status": "running",
+        "started_at": end.isoformat(),
+        "data_type": None,
+        "records_accepted": 0,
+        "sleep_stages_accepted": 0,
+    }
+    store().save(saved)
     cutoff = (
         datetime.fromisoformat(saved["last_sync"]) - timedelta(minutes=10)
         if saved.get("last_sync")
@@ -158,6 +170,8 @@ async def run_sync() -> dict[str, int | str]:
     client = GoogleHealthClient(await access_token(saved["refresh_token"]))
     record_count = sleep_count = 0
     for data_type in METRICS:
+        saved["sync"]["data_type"] = data_type
+        store().save(saved)
         records: list[dict] = []
         async for point in client.list_points(data_type):
             mapped = metric_record(data_type, point)
@@ -166,10 +180,16 @@ async def run_sync() -> dict[str, int | str]:
                 if len(records) >= settings.sync_batch_size:
                     await send_batch(records, [], end)
                     record_count += len(records)
+                    saved["sync"]["records_accepted"] = record_count
+                    store().save(saved)
                     records = []
         if records:
             await send_batch(records, [], end)
             record_count += len(records)
+            saved["sync"]["records_accepted"] = record_count
+            store().save(saved)
+    saved["sync"]["data_type"] = "sleep"
+    store().save(saved)
     sleep: list[dict] = []
     async for point in client.list_points("sleep"):
         for stage in sleep_records(point):
@@ -178,18 +198,40 @@ async def run_sync() -> dict[str, int | str]:
                 if len(sleep) >= settings.sync_batch_size:
                     await send_batch([], sleep, end)
                     sleep_count += len(sleep)
+                    saved["sync"]["sleep_stages_accepted"] = sleep_count
+                    store().save(saved)
                     sleep = []
     if sleep:
         await send_batch([], sleep, end)
         sleep_count += len(sleep)
+        saved["sync"]["sleep_stages_accepted"] = sleep_count
     saved["last_sync"] = end.isoformat()
+    saved["sync"].update({
+        "status": "complete",
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "data_type": None,
+        "records_accepted": record_count,
+        "sleep_stages_accepted": sleep_count,
+    })
     store().save(saved)
     return {"status": "complete", "records": record_count, "sleep_stages": sleep_count}
 
 
 async def guarded_sync() -> dict[str, int | str]:
     async with sync_lock:
-        return await run_sync()
+        try:
+            return await run_sync()
+        except Exception as exc:
+            saved = store().load()
+            progress = saved.get("sync", {})
+            progress.update({
+                "status": "failed",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "error": str(exc)[:500],
+            })
+            saved["sync"] = progress
+            store().save(saved)
+            raise
 
 
 async def scheduled_sync_loop() -> None:
