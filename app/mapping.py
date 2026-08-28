@@ -1,6 +1,8 @@
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
@@ -42,7 +44,7 @@ def _times(body: dict[str, Any]) -> tuple[str, str, str | None]:
     interval = body.get("interval", {})
     start = sample.get("physicalTime") or interval.get("startTime") or _date_timestamp(body.get("date"))
     end = sample.get("physicalTime") or interval.get("endTime") or start
-    offset = sample.get("utcOffset") or interval.get("startUtcOffset")
+    offset = _zone_offset(sample.get("utcOffset") or interval.get("startUtcOffset"))
     return start, end, offset
 
 
@@ -58,6 +60,29 @@ def _date_timestamp(value: Any) -> str | None:
         ).isoformat().replace("+00:00", "Z")
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def _zone_offset(value: Any) -> str | None:
+    """Convert Google's duration offset (for example ``3600s``) to ``+01:00``."""
+    if value is None:
+        return None
+    text = str(value)
+    if re.fullmatch(r"[+-]\d{2}:\d{2}", text):
+        return text
+    if not text.endswith("s"):
+        return None
+    try:
+        seconds = Decimal(text[:-1])
+    except InvalidOperation:
+        return None
+    if seconds != seconds.to_integral_value() or int(seconds) % 60:
+        return None
+    total_minutes = int(seconds) // 60
+    sign = "+" if total_minutes >= 0 else "-"
+    hours, minutes = divmod(abs(total_minutes), 60)
+    if hours > 23:
+        return None
+    return f"{sign}{hours:02d}:{minutes:02d}"
 
 
 def metric_record(data_type: str, point: dict[str, Any]) -> dict[str, Any] | None:

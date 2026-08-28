@@ -1,4 +1,4 @@
-from app.mapping import metric_record, sleep_records, stable_id
+from app.mapping import _zone_offset, metric_record, sleep_records, stable_id
 
 
 def test_heart_rate_mapping() -> None:
@@ -44,3 +44,11 @@ def test_daily_metric_date_is_converted_to_timestamp() -> None:
     assert record is not None
     assert record["startDate"] == "2026-08-27T00:00:00Z"
     assert record["endDate"] == "2026-08-27T00:00:00Z"
+
+
+def test_google_duration_offsets_are_normalized() -> None:
+    assert _zone_offset("3600s") == "+01:00"
+    assert _zone_offset("-18000s") == "-05:00"
+    assert _zone_offset("0s") == "+00:00"
+    assert _zone_offset("+05:30") == "+05:30"
+    assert _zone_offset("90s") is None
