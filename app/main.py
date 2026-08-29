@@ -229,12 +229,19 @@ async def run_sync() -> dict[str, int | str]:
     )
     client = GoogleHealthClient(await access_token(saved["refresh_token"]))
     expanded_backfill = not saved.get("expanded_backfill_complete", False)
+    history_start = datetime.combine(
+        settings.google_history_start_date, datetime.min.time(), tzinfo=timezone.utc
+    )
     record_count = sleep_count = workout_count = 0
     for data_type in METRICS:
         saved["sync"]["data_type"] = data_type
         store().save(saved)
         records: list[dict] = []
-        metric_cutoff = None if expanded_backfill and data_type in EXPANDED_METRICS else cutoff
+        metric_cutoff = (
+            history_start
+            if cutoff is None or (expanded_backfill and data_type in EXPANDED_METRICS)
+            else cutoff
+        )
         async for point in client.list_points(data_type, metric_cutoff, end):
             mapped = metric_record(data_type, point)
             if mapped and at_or_after(mapped.get("endDate") or mapped.get("startDate"), metric_cutoff):
@@ -255,7 +262,9 @@ async def run_sync() -> dict[str, int | str]:
     sleep: list[dict] = []
     async for point in client.list_points("sleep"):
         for stage in sleep_records(point):
-            if at_or_after(stage.get("endDate") or stage.get("startDate"), cutoff):
+            if at_or_after(
+                stage.get("endDate") or stage.get("startDate"), cutoff or history_start
+            ):
                 sleep.append(stage)
                 if len(sleep) >= settings.sync_batch_size:
                     await send_batch([], sleep, end)
@@ -272,7 +281,7 @@ async def run_sync() -> dict[str, int | str]:
     workouts: list[dict] = []
     async for point in client.list_points("exercise"):
         mapped = workout_record(point)
-        workout_cutoff = None if expanded_backfill else cutoff
+        workout_cutoff = history_start if expanded_backfill or cutoff is None else cutoff
         if mapped and at_or_after(mapped.get("endDate") or mapped.get("startDate"), workout_cutoff):
             workouts.append(mapped)
             if len(workouts) >= settings.sync_batch_size:

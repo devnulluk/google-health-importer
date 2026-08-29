@@ -80,11 +80,14 @@ sequenceDiagram
     end
 ```
 
-The first successful sync imports all available authorised history. Later runs
-still enumerate Google's catalogue because the v4 endpoint has no date-range
-filter, but send only data newer than the saved checkpoint with a ten-minute
-overlap. Stable record IDs make retries duplicate-safe. Runs never overlap;
-temporary failures use exponential backoff capped at six hours.
+The first successful sync imports authorised history from
+`GOOGLE_HISTORY_START_DATE`. Set it to the date the device or Google Health
+account began collecting useful data. Bounded data types such as Total Calories
+are fetched newest-first in Google's required 14-day windows, so current data
+arrives before older history. Later runs send only data newer than the saved
+checkpoint with a ten-minute overlap. Stable record IDs make retries
+duplicate-safe. Runs never overlap; temporary failures use exponential backoff
+capped at six hours.
 
 ## Supported data
 
@@ -122,7 +125,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 `TOKEN_ENCRYPTION_KEY` must remain stable for the persistent volume. Generate
 `APP_SESSION_SECRET` with a password manager. Set `PUBLIC_CONTACT_EMAIL` to a
 monitored address for privacy and deletion requests; it is displayed publicly
-on `/privacy`.
+on `/privacy`. Set `GOOGLE_HISTORY_START_DATE` in `YYYY-MM-DD` form to the
+earliest date worth importing—for example, the date you first wore the device.
+The conservative default is `2009-01-01`.
 
 ### 2. Deploy behind HTTPS
 

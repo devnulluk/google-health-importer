@@ -34,6 +34,17 @@ def test_total_calories_history_is_split_into_fourteen_day_windows() -> None:
     end = datetime(2026, 8, 16, tzinfo=timezone.utc)
 
     assert total_calorie_windows(start, end) == [
-        (start, datetime(2026, 8, 15, tzinfo=timezone.utc)),
-        (datetime(2026, 8, 15, tzinfo=timezone.utc), end),
+        (datetime(2026, 8, 2, tzinfo=timezone.utc), end),
+        (start, datetime(2026, 8, 2, tzinfo=timezone.utc)),
     ]
+
+
+def test_fitbit_air_history_needs_only_six_newest_first_windows() -> None:
+    start = datetime(2026, 6, 17, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 29, tzinfo=timezone.utc)
+
+    windows = total_calorie_windows(start, end)
+
+    assert len(windows) == 6
+    assert windows[0][1] == end
+    assert windows[-1][0] == start

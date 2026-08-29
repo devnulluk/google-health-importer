@@ -16,11 +16,11 @@ def total_calorie_windows(
     start: datetime, end: datetime
 ) -> list[tuple[datetime, datetime]]:
     windows: list[tuple[datetime, datetime]] = []
-    window_start = start
-    while window_start < end:
-        window_end = min(window_start + TOTAL_CALORIES_WINDOW, end)
+    window_end = end
+    while window_end > start:
+        window_start = max(start, window_end - TOTAL_CALORIES_WINDOW)
         windows.append((window_start, window_end))
-        window_start = window_end
+        window_end = window_start
     return windows
 
 

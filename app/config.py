@@ -1,3 +1,4 @@
+from datetime import date
 from functools import lru_cache
 
 from pydantic import SecretStr
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     app_session_secret: SecretStr
     public_contact_email: str
     app_admin_user: str = "mark"
+    google_history_start_date: date = date(2009, 1, 1)
     sync_interval_minutes: int = 15
     sync_batch_size: int = 1000
     state_path: str = "/data/state.json"
