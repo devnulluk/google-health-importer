@@ -19,6 +19,13 @@ future devices are data sources; the durable asset is your health history.
 > endorsed by Google, Fitbit, or Open Wearables. It is not a medical device and
 > does not provide medical advice.
 
+> [!NOTE]
+> **AI disclosure:** this project was vibe-coded by Mark Brown in collaboration
+> with OpenAI ChatGPT and Codex. AI assisted with architecture, implementation,
+> tests, documentation, research and live deployment troubleshooting. The
+> importer itself contains no AI integration and does not send health data to
+> an AI service. Read the full [AI development disclosure](docs/AI_DISCLOSURE.md).
+
 ## Why it exists
 
 - Own and preserve health data independently of a particular device vendor.
@@ -197,3 +204,10 @@ pytest
 Released under the [MIT Licence](LICENSE). Dependency and interoperability
 notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Open Wearables
 is an integration target; none of its source code is copied here.
+
+## How this was made
+
+This is deliberately disclosed as an AI-assisted, vibe-coded project—not
+presented as conventionally authored software. Human direction, automated
+tests and live verification were used to check the generated work, but they do
+not eliminate risk. Review the code and operate it as sensitive software.
