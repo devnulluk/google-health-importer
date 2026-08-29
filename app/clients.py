@@ -12,6 +12,10 @@ TOTAL_CALORIES_HISTORY_START = datetime(2009, 1, 1, tzinfo=timezone.utc)
 TOTAL_CALORIES_WINDOW = timedelta(days=1)
 GOOGLE_MAX_ATTEMPTS = 5
 
+
+class TotalCaloriesHistoryLimit(Exception):
+    """Google has reached the oldest daily total-calorie rollup it will serve."""
+
 SAMPLE_TYPES = {
     "blood-glucose",
     "body-fat",
@@ -179,6 +183,11 @@ class GoogleHealthClient:
                     await asyncio.sleep(0.5 * (2**attempt))
             assert response is not None
             if response.is_error:
+                if (
+                    response.status_code == 400
+                    and "INVALID_ROLLUP_QUERY_DURATION" in response.text
+                ):
+                    raise TotalCaloriesHistoryLimit
                 raise RuntimeError(
                     "Google Health rejected total-calories rollup with HTTP "
                     f"{response.status_code}: {response.text[:500]}"
@@ -225,8 +234,11 @@ class GoogleHealthClient:
             # would make the exclusive end tomorrow (a future-ended range),
             # which the live API reports as INVALID_ROLLUP_QUERY_DURATION.
             for day in total_calorie_days(history_start, final_end):
-                async for point in self._rollup_total_calories(client, day):
-                    yield point
+                try:
+                    async for point in self._rollup_total_calories(client, day):
+                        yield point
+                except TotalCaloriesHistoryLimit:
+                    break
 
 
 async def send_to_open_wearables(url: str, user_id: str, api_key: str, payload: dict[str, Any]) -> None:

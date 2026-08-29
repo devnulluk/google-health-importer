@@ -87,7 +87,9 @@ are fetched newest-first with Google's physical-time `rollUp` operation using
 UTC-midnight-aligned one-day windows. Only completed days are requested, so the
 newest total is yesterday's and today is picked up automatically after midnight.
 This satisfies the live API's otherwise undocumented alignment requirement, while current data
-arrives before older history. Other metrics use Google Health's record-specific
+arrives before older history. If Google refuses an older derived-total day, the
+supported recent totals are retained and the importer continues. Other metrics
+use Google Health's record-specific
 time filters, avoiding enumeration outside the configured history or checkpoint
 window. Later runs use a ten-minute overlap. Stable record IDs make retries
 duplicate-safe. Runs never overlap; temporary failures use exponential backoff

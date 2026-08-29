@@ -5,6 +5,7 @@ import httpx
 
 from app.clients import (
     GoogleHealthClient,
+    TotalCaloriesHistoryLimit,
     google_list_params,
     google_rollup_body,
     google_time_filter,
@@ -88,6 +89,34 @@ def test_total_calories_rollup_is_converted_to_metric_shape() -> None:
             },
         },
     }]
+
+
+def test_total_calories_history_limit_has_a_distinct_signal() -> None:
+    response = httpx.Response(
+        400,
+        text='{"error":{"details":[{"reason":"INVALID_ROLLUP_QUERY_DURATION"}]}}',
+        request=httpx.Request("POST", "https://health.googleapis.com"),
+    )
+
+    class FakeClient:
+        async def post(self, *args, **kwargs):
+            return response
+
+    async def collect():
+        client = GoogleHealthClient("token")
+        return [
+            point
+            async for point in client._rollup_total_calories(
+                FakeClient(), datetime(2026, 8, 1).date()
+            )
+        ]
+
+    try:
+        asyncio.run(collect())
+    except TotalCaloriesHistoryLimit:
+        pass
+    else:
+        raise AssertionError("history boundary should stop calorie backfill")
 
 
 def test_google_filters_cover_each_record_time_shape() -> None:
