@@ -234,9 +234,9 @@ async def run_sync() -> dict[str, int | str]:
         saved["sync"]["data_type"] = data_type
         store().save(saved)
         records: list[dict] = []
-        async for point in client.list_points(data_type):
+        metric_cutoff = None if expanded_backfill and data_type in EXPANDED_METRICS else cutoff
+        async for point in client.list_points(data_type, metric_cutoff, end):
             mapped = metric_record(data_type, point)
-            metric_cutoff = None if expanded_backfill and data_type in EXPANDED_METRICS else cutoff
             if mapped and at_or_after(mapped.get("endDate") or mapped.get("startDate"), metric_cutoff):
                 records.append(mapped)
                 if len(records) >= settings.sync_batch_size:
