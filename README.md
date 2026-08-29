@@ -169,6 +169,7 @@ HTTP Basic credentials:
 | `GET /privacy` | Public privacy policy | No |
 | `GET /health` | Liveness check | No |
 | `GET /status` | Connection and aggregate progress | Yes |
+| `GET /status/view` | Human-readable status and coverage dashboard | Yes |
 | `POST /sync` | Start a non-overlapping sync | Yes |
 | `POST /disconnect` | Revoke Google access and erase importer state | Yes |
 
@@ -196,6 +197,16 @@ Official references: [API Services User Data Policy](https://developers.google.c
 [OAuth verification requirements](https://support.google.com/cloud/answer/13464321).
 The repository also includes an operator-facing
 [Google OAuth publication checklist](docs/GOOGLE_OAUTH_CHECKLIST.md).
+
+## Operations and recovery
+
+The authenticated status dashboard reports connection, scheduler, backfill and
+per-category transfer coverage without exposing measurement values. Transfer
+counts may include safe checkpoint-overlap retries and are not unique-record
+counts.
+
+- [Operations and monitoring](docs/OPERATIONS.md)
+- [Backup and recovery](docs/BACKUP_AND_RECOVERY.md)
 
 ## Security and privacy
 

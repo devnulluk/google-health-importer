@@ -33,6 +33,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Google Health Importer", docs_url=None, redoc_url=None, lifespan=lifespan)
 basic = HTTPBasic()
+APP_VERSION = "0.3.0"
 SCOPES = " ".join([
     "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
@@ -101,14 +102,67 @@ def privacy() -> str:
     return PRIVACY_HTML.replace("{{CONTACT}}", contact)
 
 
+def status_summary(state: dict[str, object]) -> dict[str, object]:
+    settings = get_settings()
+    return {
+        "service": "google-health-importer",
+        "version": APP_VERSION,
+        "connected": bool(state.get("refresh_token")),
+        "history_start_date": settings.google_history_start_date.isoformat(),
+        "sync_interval_minutes": settings.sync_interval_minutes,
+        "expanded_backfill_complete": bool(state.get("expanded_backfill_complete")),
+        "last_sync": state.get("last_sync"),
+        "sync": state.get("sync", {"status": "idle"}),
+        "last_success": state.get("last_success"),
+        "coverage": state.get("coverage", {}),
+    }
+
+
 @app.get("/status", dependencies=[Depends(require_admin)])
 def status() -> dict[str, object]:
     state = store().load()
-    return {
-        "connected": bool(state.get("refresh_token")),
-        "last_sync": state.get("last_sync"),
-        "sync": state.get("sync", {"status": "idle"}),
-    }
+    return status_summary(state)
+
+
+@app.get("/status/view", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def status_view() -> str:
+    summary = status_summary(store().load())
+    sync = summary["sync"] if isinstance(summary["sync"], dict) else {}
+    coverage = summary["coverage"] if isinstance(summary["coverage"], dict) else {}
+    rows = []
+    for data_type, item in sorted(coverage.items()):
+        details = item if isinstance(item, dict) else {}
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(data_type))}</td>"
+            f"<td>{int(details.get('records_sent', 0)):,}</td>"
+            f"<td>{html.escape(str(details.get('first_seen_at') or '—'))}</td>"
+            f"<td>{html.escape(str(details.get('last_seen_at') or '—'))}</td>"
+            "</tr>"
+        )
+    status_name = html.escape(str(sync.get("status", "idle")))
+    current_type = html.escape(str(sync.get("data_type") or "—"))
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60">
+<title>Importer status</title><style>
+body{{font:15px/1.5 system-ui,sans-serif;margin:0;background:#f4f7fb;color:#172033}}main{{max-width:1050px;margin:2rem auto;padding:0 1rem}}
+h1{{color:#155eef}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:1rem}}
+.card,table{{background:white;border-radius:14px;box-shadow:0 6px 24px #14213d12}}.card{{padding:1rem 1.2rem}}
+.label{{color:#667085;font-size:.85rem}}.value{{font-size:1.15rem;font-weight:650;overflow-wrap:anywhere}}
+table{{width:100%;border-collapse:collapse;margin-top:1.5rem;overflow:hidden}}th,td{{padding:.7rem;text-align:left;border-bottom:1px solid #e7ebf2}}
+th{{background:#eef3ff}}code{{background:#eef3ff;padding:.12rem .3rem;border-radius:.25rem}}a{{color:#155eef}}
+</style></head><body><main><h1>Google Health importer</h1>
+<div class="grid">
+<div class="card"><div class="label">Connection</div><div class="value">{'Connected' if summary['connected'] else 'Disconnected'}</div></div>
+<div class="card"><div class="label">Current status</div><div class="value">{status_name}</div></div>
+<div class="card"><div class="label">Current data type</div><div class="value">{current_type}</div></div>
+<div class="card"><div class="label">Historical backfill</div><div class="value">{'Complete' if summary['expanded_backfill_complete'] else 'Pending'}</div></div>
+<div class="card"><div class="label">Last checkpoint</div><div class="value">{html.escape(str(summary['last_sync'] or 'Never'))}</div></div>
+<div class="card"><div class="label">Schedule</div><div class="value">Every {int(summary['sync_interval_minutes'])} minutes</div></div>
+</div><table><thead><tr><th>Data type</th><th>Records sent*</th><th>First observed</th><th>Last observed</th></tr></thead>
+<tbody>{''.join(rows) or '<tr><td colspan="4">Coverage will appear after the next sync.</td></tr>'}</tbody></table>
+<p><small>*Transfer count, not a unique-record count; checkpoint overlap may resend stable IDs.</small></p>
+<p><a href="/status">JSON status</a> · Automatically refreshes every minute.</p></main></body></html>"""
 
 
 @app.get("/oauth/start", dependencies=[Depends(require_admin)])
@@ -188,6 +242,34 @@ def at_or_after(value: str | None, cutoff: datetime | None) -> bool:
     return parsed >= cutoff
 
 
+def update_coverage(
+    saved: dict[str, object], data_type: str, items: list[dict], sent_at: datetime
+) -> None:
+    """Record aggregate transfer coverage without retaining health values."""
+    if not items:
+        return
+    coverage = saved.setdefault("coverage", {})
+    assert isinstance(coverage, dict)
+    entry = coverage.setdefault(data_type, {})
+    assert isinstance(entry, dict)
+    timestamps = [
+        value
+        for item in items
+        for value in [item.get("endDate") or item.get("startDate")]
+        if isinstance(value, str)
+    ]
+    entry["records_sent"] = int(entry.get("records_sent", 0)) + len(items)
+    entry["last_sent_at"] = sent_at.isoformat()
+    if timestamps:
+        earliest, latest = min(timestamps), max(timestamps)
+        entry["first_seen_at"] = min(
+            str(entry.get("first_seen_at") or earliest), earliest
+        )
+        entry["last_seen_at"] = max(
+            str(entry.get("last_seen_at") or latest), latest
+        )
+
+
 async def send_batch(
     records: list[dict], sleep: list[dict], sync_time: datetime,
     workouts: list[dict] | None = None,
@@ -195,7 +277,7 @@ async def send_batch(
     settings = get_settings()
     payload = {
         "provider": "google",
-        "sdkVersion": "google-health-importer/0.2.0",
+        "sdkVersion": f"google-health-importer/{APP_VERSION}",
         "syncTimestamp": sync_time.isoformat(),
         "data": {"records": records, "sleep": sleep, "workouts": workouts or []},
     }
@@ -248,12 +330,14 @@ async def run_sync() -> dict[str, int | str]:
                 records.append(mapped)
                 if len(records) >= settings.sync_batch_size:
                     await send_batch(records, [], end)
+                    update_coverage(saved, data_type, records, end)
                     record_count += len(records)
                     saved["sync"]["records_accepted"] = record_count
                     store().save(saved)
                     records = []
         if records:
             await send_batch(records, [], end)
+            update_coverage(saved, data_type, records, end)
             record_count += len(records)
             saved["sync"]["records_accepted"] = record_count
             store().save(saved)
@@ -269,12 +353,14 @@ async def run_sync() -> dict[str, int | str]:
                 sleep.append(stage)
                 if len(sleep) >= settings.sync_batch_size:
                     await send_batch([], sleep, end)
+                    update_coverage(saved, "sleep-stages", sleep, end)
                     sleep_count += len(sleep)
                     saved["sync"]["sleep_stages_accepted"] = sleep_count
                     store().save(saved)
                     sleep = []
     if sleep:
         await send_batch([], sleep, end)
+        update_coverage(saved, "sleep-stages", sleep, end)
         sleep_count += len(sleep)
         saved["sync"]["sleep_stages_accepted"] = sleep_count
     saved["sync"]["data_type"] = "exercise"
@@ -287,12 +373,14 @@ async def run_sync() -> dict[str, int | str]:
             workouts.append(mapped)
             if len(workouts) >= settings.sync_batch_size:
                 await send_batch([], [], end, workouts)
+                update_coverage(saved, "exercise", workouts, end)
                 workout_count += len(workouts)
                 saved["sync"]["workouts_accepted"] = workout_count
                 store().save(saved)
                 workouts = []
     if workouts:
         await send_batch([], [], end, workouts)
+        update_coverage(saved, "exercise", workouts, end)
         workout_count += len(workouts)
         saved["sync"]["workouts_accepted"] = workout_count
     saved["last_sync"] = end.isoformat()
@@ -305,6 +393,7 @@ async def run_sync() -> dict[str, int | str]:
         "sleep_stages_accepted": sleep_count,
         "workouts_accepted": workout_count,
     })
+    saved["last_success"] = dict(saved["sync"])
     store().save(saved)
     return {
         "status": "complete", "records": record_count,
