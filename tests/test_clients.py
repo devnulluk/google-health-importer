@@ -119,23 +119,36 @@ def test_google_filters_cover_each_record_time_shape() -> None:
     )
 
 
-def test_total_calories_history_uses_safe_thirteen_day_windows() -> None:
+def test_total_calories_history_uses_daily_windows() -> None:
     start = datetime(2026, 8, 1, tzinfo=timezone.utc)
     end = datetime(2026, 8, 16, tzinfo=timezone.utc)
 
     assert total_calorie_windows(start, end) == [
-        (datetime(2026, 8, 3, tzinfo=timezone.utc), end),
-        (start, datetime(2026, 8, 3, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 15, tzinfo=timezone.utc), end),
+        (datetime(2026, 8, 14, tzinfo=timezone.utc), datetime(2026, 8, 15, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 13, tzinfo=timezone.utc), datetime(2026, 8, 14, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 12, tzinfo=timezone.utc), datetime(2026, 8, 13, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 11, tzinfo=timezone.utc), datetime(2026, 8, 12, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 10, tzinfo=timezone.utc), datetime(2026, 8, 11, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 9, tzinfo=timezone.utc), datetime(2026, 8, 10, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 8, tzinfo=timezone.utc), datetime(2026, 8, 9, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 7, tzinfo=timezone.utc), datetime(2026, 8, 8, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 6, tzinfo=timezone.utc), datetime(2026, 8, 7, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 5, tzinfo=timezone.utc), datetime(2026, 8, 6, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 4, tzinfo=timezone.utc), datetime(2026, 8, 5, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 3, tzinfo=timezone.utc), datetime(2026, 8, 4, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 2, tzinfo=timezone.utc), datetime(2026, 8, 3, tzinfo=timezone.utc)),
+        (start, datetime(2026, 8, 2, tzinfo=timezone.utc)),
     ]
 
 
-def test_fitbit_air_history_needs_only_six_newest_first_windows() -> None:
+def test_fitbit_air_history_uses_bounded_newest_first_daily_windows() -> None:
     start = datetime(2026, 6, 17, tzinfo=timezone.utc)
     end = datetime(2026, 8, 29, tzinfo=timezone.utc)
 
     windows = total_calorie_windows(start, end)
 
-    assert len(windows) == 6
+    assert len(windows) == 73
     assert windows[0][1] == end
     assert windows[-1][0] == start
 

@@ -6,9 +6,10 @@ import httpx
 
 
 TOTAL_CALORIES_HISTORY_START = datetime(2009, 1, 1, tzinfo=timezone.utc)
-# Google's documented limit is 14 days, but requests spanning exactly 14 days
-# can be rejected once sub-second timestamps are involved. Keep a safety margin.
-TOTAL_CALORIES_WINDOW = timedelta(days=13)
+# The live API rejects multi-day total-calorie rollups for some accounts even
+# though the reference documents a 14-day maximum. Daily newest-first windows
+# are reliable and still keep a bounded user-selected history.
+TOTAL_CALORIES_WINDOW = timedelta(days=1)
 GOOGLE_MAX_ATTEMPTS = 5
 
 SAMPLE_TYPES = {
