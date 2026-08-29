@@ -13,7 +13,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.clients import GoogleHealthClient, send_to_open_wearables
 from app.config import get_settings
-from app.mapping import METRICS, metric_record, sleep_records
+from app.mapping import EXPANDED_METRICS, METRICS, metric_record, sleep_records, workout_record
 from app.store import StateStore
 
 logger = logging.getLogger("google-health-importer")
@@ -34,6 +34,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Google Health Importer", docs_url=None, redoc_url=None, lifespan=lifespan)
 basic = HTTPBasic()
 SCOPES = " ".join([
+    "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
     "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
 ])
@@ -45,7 +46,7 @@ body{font:16px system-ui,sans-serif;max-width:760px;margin:5rem auto;padding:0 1
 main{background:white;padding:2.5rem;border-radius:20px;box-shadow:0 12px 40px #14213d18}h1{margin-top:0;color:#155eef}
 a{color:#155eef}code{background:#eef3ff;padding:.15rem .35rem;border-radius:.3rem}.links{display:flex;gap:1rem;flex-wrap:wrap}
 </style></head><body><main><h1>Google Health Importer</h1>
-<p>A self-hosted, read-only bridge that copies authorised health metrics and sleep data from Google Health into an Open Wearables instance controlled by the user.</p>
+<p>A self-hosted, read-only bridge that copies authorised health metrics, activity, workouts and sleep data from Google Health into an Open Wearables instance controlled by the user.</p>
 <p>The importer does not sell data, use it for advertising, or train AI models. Administrative and synchronisation controls require HTTP Basic authentication.</p>
 <p class="links"><a href="/privacy">Privacy policy</a><a href="https://github.com/devnulluk/google-health-importer">Source code</a></p>
 </main></body></html>"""
@@ -55,7 +56,7 @@ PRIVACY_HTML = """<!doctype html>
 <title>Privacy policy · Google Health Importer</title><style>
 body{font:16px/1.6 system-ui,sans-serif;max-width:820px;margin:3rem auto;padding:0 1.5rem;color:#172033}h1,h2{color:#155eef}a{color:#155eef}
 </style></head><body><h1>Privacy policy</h1><p><strong>Effective 29 August 2026.</strong></p>
-<p>This self-hosted application accesses Google user data only after the user grants OAuth consent. It requests read-only access to Google Health health metrics and measurements and sleep data.</p>
+<p>This self-hosted application accesses Google user data only after the user grants OAuth consent. It requests read-only access to Google Health health metrics and measurements, activity and fitness, and sleep data.</p>
 <h2>How data is used</h2><p>Authorised data is used solely to provide the user-facing feature of copying the user's health history into the Open Wearables destination selected and controlled by the operator. It is not used for advertising, profiling, sale, surveillance, or training general-purpose AI models.</p>
 <h2>Storage and sharing</h2><p>The importer stores an encrypted Google refresh token, a last-sync checkpoint, and aggregate progress counts in its private persistent volume. Health records pass through memory in batches and are sent only to the configured Open Wearables instance; the importer does not retain a second health-record database. No Google user data is shared with unrelated third parties.</p>
 <h2>Retention, deletion, and revocation</h2><p>The encrypted connection state is retained until the operator uses the authenticated <code>POST /disconnect</code> control or removes the persistent volume. Disconnecting revokes the Google token and deletes importer state. Records already copied into Open Wearables are controlled by that separate self-hosted service and must be deleted there if desired.</p>
@@ -142,6 +143,7 @@ async def oauth_callback(request: Request, code: str, state: str) -> dict[str, s
     if "refresh_token" not in token:
         raise HTTPException(400, "Google did not return an offline refresh token")
     saved["refresh_token"] = token["refresh_token"]
+    saved["expanded_backfill_complete"] = False
     store().save(saved)
     return {"status": "connected"}
 
@@ -186,13 +188,16 @@ def at_or_after(value: str | None, cutoff: datetime | None) -> bool:
     return parsed >= cutoff
 
 
-async def send_batch(records: list[dict], sleep: list[dict], sync_time: datetime) -> None:
+async def send_batch(
+    records: list[dict], sleep: list[dict], sync_time: datetime,
+    workouts: list[dict] | None = None,
+) -> None:
     settings = get_settings()
     payload = {
         "provider": "google",
         "sdkVersion": "google-health-importer/0.2.0",
         "syncTimestamp": sync_time.isoformat(),
-        "data": {"records": records, "sleep": sleep, "workouts": []},
+        "data": {"records": records, "sleep": sleep, "workouts": workouts or []},
     }
     await send_to_open_wearables(
         settings.open_wearables_url,
@@ -214,6 +219,7 @@ async def run_sync() -> dict[str, int | str]:
         "data_type": None,
         "records_accepted": 0,
         "sleep_stages_accepted": 0,
+        "workouts_accepted": 0,
     }
     store().save(saved)
     cutoff = (
@@ -222,14 +228,16 @@ async def run_sync() -> dict[str, int | str]:
         else None
     )
     client = GoogleHealthClient(await access_token(saved["refresh_token"]))
-    record_count = sleep_count = 0
+    expanded_backfill = not saved.get("expanded_backfill_complete", False)
+    record_count = sleep_count = workout_count = 0
     for data_type in METRICS:
         saved["sync"]["data_type"] = data_type
         store().save(saved)
         records: list[dict] = []
         async for point in client.list_points(data_type):
             mapped = metric_record(data_type, point)
-            if mapped and at_or_after(mapped.get("endDate") or mapped.get("startDate"), cutoff):
+            metric_cutoff = None if expanded_backfill and data_type in EXPANDED_METRICS else cutoff
+            if mapped and at_or_after(mapped.get("endDate") or mapped.get("startDate"), metric_cutoff):
                 records.append(mapped)
                 if len(records) >= settings.sync_batch_size:
                     await send_batch(records, [], end)
@@ -259,16 +267,39 @@ async def run_sync() -> dict[str, int | str]:
         await send_batch([], sleep, end)
         sleep_count += len(sleep)
         saved["sync"]["sleep_stages_accepted"] = sleep_count
+    saved["sync"]["data_type"] = "exercise"
+    store().save(saved)
+    workouts: list[dict] = []
+    async for point in client.list_points("exercise"):
+        mapped = workout_record(point)
+        workout_cutoff = None if expanded_backfill else cutoff
+        if mapped and at_or_after(mapped.get("endDate") or mapped.get("startDate"), workout_cutoff):
+            workouts.append(mapped)
+            if len(workouts) >= settings.sync_batch_size:
+                await send_batch([], [], end, workouts)
+                workout_count += len(workouts)
+                saved["sync"]["workouts_accepted"] = workout_count
+                store().save(saved)
+                workouts = []
+    if workouts:
+        await send_batch([], [], end, workouts)
+        workout_count += len(workouts)
+        saved["sync"]["workouts_accepted"] = workout_count
     saved["last_sync"] = end.isoformat()
+    saved["expanded_backfill_complete"] = True
     saved["sync"].update({
         "status": "complete",
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "data_type": None,
         "records_accepted": record_count,
         "sleep_stages_accepted": sleep_count,
+        "workouts_accepted": workout_count,
     })
     store().save(saved)
-    return {"status": "complete", "records": record_count, "sleep_stages": sleep_count}
+    return {
+        "status": "complete", "records": record_count,
+        "sleep_stages": sleep_count, "workouts": workout_count,
+    }
 
 
 async def guarded_sync() -> dict[str, int | str]:

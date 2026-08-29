@@ -39,7 +39,7 @@ future devices are data sources; the durable asset is your health history.
 ```mermaid
 flowchart LR
     U([You]) -->|OAuth consent| G[Google Health API]
-    G -->|read-only metrics & sleep| I[Google Health Importer]
+    G -->|read-only metrics, activity & sleep| I[Google Health Importer]
     I -->|validated batches| O[Open Wearables API]
     O --> D[(Your health-data store)]
     A[Authenticated admin] -->|status / sync / disconnect| I
@@ -88,15 +88,23 @@ temporary failures use exponential backoff capped at six hours.
 
 ## Supported data
 
-- Heart rate and heart-rate variability (RMSSD)
-- Oxygen saturation
-- Daily resting heart rate and respiratory rate
+- Heart rate, intraday HRV (RMSSD) and daily HRV
+- Intraday and daily oxygen saturation
+- Resting heart rate and sleep respiratory-rate summaries
+- Nightly skin-temperature derivations
+- Steps, distance, calories, active minutes and Active Zone Minutes
+- VO₂ max and run VO₂ max
+- Workouts with type, duration, distance, steps, calories, heart rate,
+  elevation, speed and available zone summaries
 - Sleep stages
+- Compatible measurements such as weight, body fat, height, core body
+  temperature and blood glucose when present in Google Health
 
 The importer requests only these OAuth scopes:
 
 ```text
 googlehealth.health_metrics_and_measurements.readonly
+googlehealth.activity_and_fitness.readonly
 googlehealth.sleep.readonly
 ```
 
@@ -135,7 +143,7 @@ https://your-importer.example/oauth/callback
 
 Set the OAuth homepage to `https://your-importer.example/` and privacy-policy
 URL to `https://your-importer.example/privacy`. Verify the domain in Google
-Search Console. Consent-screen scopes must exactly match the two read-only
+Search Console. Consent-screen scopes must exactly match the three read-only
 scopes above.
 
 ### 4. Connect and observe

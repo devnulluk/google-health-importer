@@ -25,6 +25,8 @@ class GoogleHealthClient:
                     f"{self.base_url}/dataTypes/{data_type}/dataPoints",
                     headers=self.headers, params=google_list_params(data_type, page_token),
                 )
+                if response.status_code == 403 and "MISSING_OAUTH_SCOPE" in response.text:
+                    return
                 response.raise_for_status()
                 payload = response.json()
                 for point in payload.get("dataPoints", []):

@@ -14,8 +14,8 @@ source code. It is not legal advice and does not replace Google's policies.
 
 ## Consent and scopes
 
-- [ ] Configure exactly the two read-only scopes requested by the code.
-- [ ] Explain that metrics and sleep are copied to the user's configured Open
+- [ ] Configure exactly the three read-only scopes requested by the code.
+- [ ] Explain that metrics, activity, workouts and sleep are copied to the user's configured Open
       Wearables instance.
 - [ ] Do not add scopes for possible future features.
 - [ ] Demonstrate the complete OAuth flow if Google requests a verification
