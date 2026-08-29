@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator
 
@@ -6,6 +7,7 @@ import httpx
 
 TOTAL_CALORIES_HISTORY_START = datetime(2009, 1, 1, tzinfo=timezone.utc)
 TOTAL_CALORIES_WINDOW = timedelta(days=14)
+GOOGLE_MAX_ATTEMPTS = 5
 
 
 def _rfc3339(value: datetime) -> str:
@@ -57,11 +59,18 @@ class GoogleHealthClient:
     ) -> AsyncIterator[dict[str, Any]]:
         page_token = None
         while True:
-            response = await client.get(
-                f"{self.base_url}/dataTypes/{data_type}/dataPoints",
-                headers=self.headers,
-                params=google_list_params(data_type, page_token, start, end),
-            )
+            response = None
+            for attempt in range(GOOGLE_MAX_ATTEMPTS):
+                response = await client.get(
+                    f"{self.base_url}/dataTypes/{data_type}/dataPoints",
+                    headers=self.headers,
+                    params=google_list_params(data_type, page_token, start, end),
+                )
+                if response.status_code != 429 and response.status_code < 500:
+                    break
+                if attempt + 1 < GOOGLE_MAX_ATTEMPTS:
+                    await asyncio.sleep(0.5 * (2**attempt))
+            assert response is not None
             if response.status_code == 403 and "MISSING_OAUTH_SCOPE" in response.text:
                 return
             response.raise_for_status()

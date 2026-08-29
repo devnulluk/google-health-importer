@@ -1,6 +1,9 @@
+import asyncio
 from datetime import datetime, timezone
 
-from app.clients import google_list_params, total_calorie_windows
+import httpx
+
+from app.clients import GoogleHealthClient, google_list_params, total_calorie_windows
 
 
 def test_google_list_params_only_use_supported_fields() -> None:
@@ -48,3 +51,35 @@ def test_fitbit_air_history_needs_only_six_newest_first_windows() -> None:
     assert len(windows) == 6
     assert windows[0][1] == end
     assert windows[-1][0] == start
+
+
+def test_google_server_error_is_retried(monkeypatch) -> None:
+    responses = [
+        httpx.Response(500, request=httpx.Request("GET", "https://health.googleapis.com")),
+        httpx.Response(
+            200,
+            json={"dataPoints": [{"name": "point-1"}]},
+            request=httpx.Request("GET", "https://health.googleapis.com"),
+        ),
+    ]
+
+    class FakeClient:
+        calls = 0
+
+        async def get(self, *args, **kwargs):
+            response = responses[self.calls]
+            self.calls += 1
+            return response
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr("app.clients.asyncio.sleep", no_sleep)
+    fake = FakeClient()
+
+    async def collect_points():
+        client = GoogleHealthClient("access-token")
+        return [point async for point in client._list_window(fake, "heart-rate")]
+
+    assert asyncio.run(collect_points()) == [{"name": "point-1"}]
+    assert fake.calls == 2
