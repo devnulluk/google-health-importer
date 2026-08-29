@@ -8,6 +8,7 @@ from app.clients import (
     google_list_params,
     google_daily_rollup_body,
     google_time_filter,
+    total_calorie_days,
     total_calorie_windows,
 )
 
@@ -147,6 +148,16 @@ def test_fitbit_air_history_uses_bounded_newest_first_daily_windows() -> None:
     assert len(windows) == 73
     assert windows[0][1] == end
     assert windows[-1][0] == start
+
+
+def test_total_calorie_days_exclude_incomplete_current_day() -> None:
+    start = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 29, 20, 0, tzinfo=timezone.utc)
+
+    assert total_calorie_days(start, end) == [
+        datetime(2026, 8, 28).date(),
+        datetime(2026, 8, 27).date(),
+    ]
 
 
 def test_google_server_error_is_retried(monkeypatch) -> None:

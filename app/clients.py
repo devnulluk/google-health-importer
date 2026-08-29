@@ -82,6 +82,16 @@ def total_calorie_windows(
     return windows
 
 
+def total_calorie_days(start: datetime, end: datetime) -> list[date]:
+    """Return completed civil days newest-first, excluding the current day."""
+    days: list[date] = []
+    day = end.date() - timedelta(days=1)
+    while day >= start.date():
+        days.append(day)
+        day -= timedelta(days=1)
+    return days
+
+
 def google_list_params(
     data_type: str,
     page_token: str | None = None,
@@ -215,12 +225,13 @@ class GoogleHealthClient:
                 return
 
             final_end = end or datetime.now(timezone.utc)
-            first_day = (start or TOTAL_CALORIES_HISTORY_START).date()
-            day = final_end.date()
-            while day >= first_day:
+            history_start = start or TOTAL_CALORIES_HISTORY_START
+            # Daily rollups must cover complete civil days. Asking for today
+            # would make the exclusive end tomorrow (a future-ended range),
+            # which the live API reports as INVALID_ROLLUP_QUERY_DURATION.
+            for day in total_calorie_days(history_start, final_end):
                 async for point in self._daily_rollup_total_calories(client, day):
                     yield point
-                day -= timedelta(days=1)
 
 
 async def send_to_open_wearables(url: str, user_id: str, api_key: str, payload: dict[str, Any]) -> None:
