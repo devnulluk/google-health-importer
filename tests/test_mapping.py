@@ -17,6 +17,26 @@ def test_sleep_stage_mapping_and_stable_ids() -> None:
     assert records[0]["parentId"] == stable_id(point)
 
 
+def test_sleep_stage_mapping_uses_current_google_stages_field() -> None:
+    point = {
+        "name": "users/me/dataTypes/sleep/dataPoints/current-shape",
+        "sleep": {
+            "stages": [
+                {
+                    "startTime": "2026-08-28T00:00:00Z",
+                    "endTime": "2026-08-28T01:00:00Z",
+                    "type": "REM",
+                }
+            ]
+        },
+    }
+
+    records = sleep_records(point)
+
+    assert len(records) == 1
+    assert records[0]["stage"] == "rem"
+
+
 def test_hrv_uses_google_full_rmssd_field_name() -> None:
     point = {
         "heartRateVariability": {

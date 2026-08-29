@@ -105,7 +105,10 @@ def sleep_records(point: dict[str, Any]) -> list[dict[str, Any]]:
     sleep = point.get("sleep", point)
     parent_id = stable_id(point)
     result = []
-    for index, stage in enumerate(sleep.get("sleepStages", [])):
+    # Google Health v4 currently returns ``stages``. Keep accepting the
+    # earlier ``sleepStages`` spelling for compatibility with older exports.
+    stages = sleep.get("stages", sleep.get("sleepStages", []))
+    for index, stage in enumerate(stages):
         label = str(stage.get("type", "UNKNOWN")).lower()
         if label not in {"awake", "light", "deep", "rem"}:
             label = "unknown"
