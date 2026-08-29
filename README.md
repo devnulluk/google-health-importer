@@ -84,8 +84,9 @@ The first successful sync imports authorised history from
 `GOOGLE_HISTORY_START_DATE`. Set it to the date the device or Google Health
 account began collecting useful data. Bounded data types such as Total Calories
 are fetched newest-first in Google's required 14-day windows, so current data
-arrives before older history. Later runs send only data newer than the saved
-checkpoint with a ten-minute overlap. Stable record IDs make retries
+arrives before older history. Other metrics use Google Health's record-specific
+time filters, avoiding enumeration outside the configured history or checkpoint
+window. Later runs use a ten-minute overlap. Stable record IDs make retries
 duplicate-safe. Runs never overlap; temporary failures use exponential backoff
 capped at six hours.
 

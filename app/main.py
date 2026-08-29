@@ -260,10 +260,11 @@ async def run_sync() -> dict[str, int | str]:
     saved["sync"]["data_type"] = "sleep"
     store().save(saved)
     sleep: list[dict] = []
-    async for point in client.list_points("sleep"):
+    sleep_cutoff = cutoff or history_start
+    async for point in client.list_points("sleep", sleep_cutoff, end):
         for stage in sleep_records(point):
             if at_or_after(
-                stage.get("endDate") or stage.get("startDate"), cutoff or history_start
+                stage.get("endDate") or stage.get("startDate"), sleep_cutoff
             ):
                 sleep.append(stage)
                 if len(sleep) >= settings.sync_batch_size:
@@ -279,9 +280,9 @@ async def run_sync() -> dict[str, int | str]:
     saved["sync"]["data_type"] = "exercise"
     store().save(saved)
     workouts: list[dict] = []
-    async for point in client.list_points("exercise"):
+    workout_cutoff = history_start if expanded_backfill or cutoff is None else cutoff
+    async for point in client.list_points("exercise", workout_cutoff, end):
         mapped = workout_record(point)
-        workout_cutoff = history_start if expanded_backfill or cutoff is None else cutoff
         if mapped and at_or_after(mapped.get("endDate") or mapped.get("startDate"), workout_cutoff):
             workouts.append(mapped)
             if len(workouts) >= settings.sync_batch_size:

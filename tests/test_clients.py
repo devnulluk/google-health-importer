@@ -3,7 +3,12 @@ from datetime import datetime, timezone
 
 import httpx
 
-from app.clients import GoogleHealthClient, google_list_params, total_calorie_windows
+from app.clients import (
+    GoogleHealthClient,
+    google_list_params,
+    google_time_filter,
+    total_calorie_windows,
+)
 
 
 def test_google_list_params_only_use_supported_fields() -> None:
@@ -30,6 +35,32 @@ def test_total_calories_includes_required_bounded_interval_filter() -> None:
         ),
         "pageToken": "next",
     }
+
+
+def test_google_filters_cover_each_record_time_shape() -> None:
+    start = datetime(2026, 6, 17, 12, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 29, 13, 0, tzinfo=timezone.utc)
+
+    assert google_time_filter("heart-rate", start, end) == (
+        'heart_rate.sample_time.physical_time >= "2026-06-17T12:30:00Z" AND '
+        'heart_rate.sample_time.physical_time < "2026-08-29T13:00:00Z"'
+    )
+    assert google_time_filter("steps", start, end) == (
+        'steps.interval.start_time >= "2026-06-17T12:30:00Z" AND '
+        'steps.interval.start_time < "2026-08-29T13:00:00Z"'
+    )
+    assert google_time_filter("daily-heart-rate-variability", start, end) == (
+        'daily_heart_rate_variability.date >= "2026-06-17" AND '
+        'daily_heart_rate_variability.date < "2026-08-30"'
+    )
+    assert google_time_filter("sleep", start, end) == (
+        'sleep.interval.civil_end_time >= "2026-06-17" AND '
+        'sleep.interval.civil_end_time < "2026-08-30"'
+    )
+    assert google_time_filter("exercise", start, end) == (
+        'exercise.interval.civil_start_time >= "2026-06-17" AND '
+        'exercise.interval.civil_start_time < "2026-08-30"'
+    )
 
 
 def test_total_calories_history_is_split_into_fourteen_day_windows() -> None:

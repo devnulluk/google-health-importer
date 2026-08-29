@@ -9,9 +9,62 @@ TOTAL_CALORIES_HISTORY_START = datetime(2009, 1, 1, tzinfo=timezone.utc)
 TOTAL_CALORIES_WINDOW = timedelta(days=14)
 GOOGLE_MAX_ATTEMPTS = 5
 
+SAMPLE_TYPES = {
+    "blood-glucose",
+    "body-fat",
+    "core-body-temperature",
+    "heart-rate",
+    "heart-rate-variability",
+    "height",
+    "oxygen-saturation",
+    "respiratory-rate-sleep-summary",
+    "run-vo2-max",
+    "vo2-max",
+    "weight",
+}
+DAILY_TYPES = {
+    "daily-heart-rate-variability",
+    "daily-heart-rate-zones",
+    "daily-oxygen-saturation",
+    "daily-respiratory-rate",
+    "daily-resting-heart-rate",
+    "daily-sleep-temperature-derivations",
+    "daily-vo2-max",
+}
+
 
 def _rfc3339(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def google_time_filter(data_type: str, start: datetime, end: datetime) -> str:
+    filter_name = data_type.replace("-", "_")
+    if data_type in DAILY_TYPES:
+        end_date = (end + timedelta(days=1)).date().isoformat()
+        return (
+            f'{filter_name}.date >= "{start.date().isoformat()}" AND '
+            f'{filter_name}.date < "{end_date}"'
+        )
+    if data_type == "sleep":
+        field = "sleep.interval.civil_end_time"
+        return (
+            f'{field} >= "{start.date().isoformat()}" AND '
+            f'{field} < "{(end + timedelta(days=1)).date().isoformat()}"'
+        )
+    if data_type == "exercise":
+        field = "exercise.interval.civil_start_time"
+        return (
+            f'{field} >= "{start.date().isoformat()}" AND '
+            f'{field} < "{(end + timedelta(days=1)).date().isoformat()}"'
+        )
+    record_field = (
+        "sample_time.physical_time" if data_type in SAMPLE_TYPES else "interval.start_time"
+    )
+    field = f"{filter_name}.{record_field}"
+    return (
+        f'{field} >= "{_rfc3339(start)}" AND '
+        f'{field} < "{_rfc3339(end)}"'
+    )
 
 
 def total_calorie_windows(
@@ -34,11 +87,8 @@ def google_list_params(
 ) -> dict[str, str]:
     """Build parameters supported by the Google Health v4 list endpoint."""
     params = {"pageSize": "25" if data_type in {"exercise", "sleep"} else "10000"}
-    if data_type == "total-calories" and start is not None and end is not None:
-        params["filter"] = (
-            f'total_calories.interval.start_time >= "{_rfc3339(start)}" AND '
-            f'total_calories.interval.start_time < "{_rfc3339(end)}"'
-        )
+    if start is not None and end is not None:
+        params["filter"] = google_time_filter(data_type, start, end)
     if page_token:
         params["pageToken"] = page_token
     return params
@@ -89,7 +139,7 @@ class GoogleHealthClient:
     ) -> AsyncIterator[dict[str, Any]]:
         async with httpx.AsyncClient(timeout=60) as client:
             if data_type != "total-calories":
-                async for point in self._list_window(client, data_type):
+                async for point in self._list_window(client, data_type, start, end):
                     yield point
                 return
 
