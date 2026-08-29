@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, AsyncIterator
 
 import httpx
@@ -97,12 +97,17 @@ def google_list_params(
     return params
 
 
-def google_rollup_body(
-    start: datetime, end: datetime, page_token: str | None = None
-) -> dict[str, Any]:
+def _civil_datetime(value: date) -> dict[str, Any]:
+    return {"date": {"year": value.year, "month": value.month, "day": value.day}}
+
+
+def google_daily_rollup_body(day: date, page_token: str | None = None) -> dict[str, Any]:
     body: dict[str, Any] = {
-        "range": {"startTime": _rfc3339(start), "endTime": _rfc3339(end)},
-        "windowSize": "86400s",
+        "range": {
+            "start": _civil_datetime(day),
+            "end": _civil_datetime(day + timedelta(days=1)),
+        },
+        "windowSizeDays": 1,
         "pageSize": 10000,
     }
     if page_token:
@@ -151,17 +156,17 @@ class GoogleHealthClient:
             if not page_token:
                 break
 
-    async def _rollup_total_calories(
-        self, client: httpx.AsyncClient, start: datetime, end: datetime
+    async def _daily_rollup_total_calories(
+        self, client: httpx.AsyncClient, day: date
     ) -> AsyncIterator[dict[str, Any]]:
         page_token = None
         while True:
             response = None
             for attempt in range(GOOGLE_MAX_ATTEMPTS):
                 response = await client.post(
-                    f"{self.base_url}/dataTypes/total-calories/dataPoints:rollUp",
+                    f"{self.base_url}/dataTypes/total-calories/dataPoints:dailyRollUp",
                     headers=self.headers,
-                    json=google_rollup_body(start, end, page_token),
+                    json=google_daily_rollup_body(day, page_token),
                 )
                 if response.status_code != 429 and response.status_code < 500:
                     break
@@ -170,7 +175,7 @@ class GoogleHealthClient:
             assert response is not None
             if response.is_error:
                 raise RuntimeError(
-                    "Google Health rejected total-calories rollup with HTTP "
+                    "Google Health rejected total-calories daily rollup with HTTP "
                     f"{response.status_code}: {response.text[:500]}"
                 )
             payload = response.json()
@@ -178,16 +183,18 @@ class GoogleHealthClient:
                 value = point.get("totalCalories", {})
                 if "kcalSum" not in value:
                     continue
+                start_time = datetime.combine(day, time.min, tzinfo=timezone.utc)
+                end_time = start_time + timedelta(days=1)
                 yield {
                     "name": (
                         "users/me/dataTypes/total-calories/rollups/"
-                        f"{point.get('startTime', '')}"
+                        f"{day.isoformat()}"
                     ),
                     "totalCalories": {
                         "kcal": value["kcalSum"],
                         "interval": {
-                            "startTime": point.get("startTime"),
-                            "endTime": point.get("endTime"),
+                            "startTime": _rfc3339(start_time),
+                            "endTime": _rfc3339(end_time),
                         },
                     },
                 }
@@ -208,13 +215,12 @@ class GoogleHealthClient:
                 return
 
             final_end = end or datetime.now(timezone.utc)
-            for window_start, window_end in total_calorie_windows(
-                start or TOTAL_CALORIES_HISTORY_START, final_end
-            ):
-                async for point in self._rollup_total_calories(
-                    client, window_start, window_end
-                ):
+            first_day = (start or TOTAL_CALORIES_HISTORY_START).date()
+            day = final_end.date()
+            while day >= first_day:
+                async for point in self._daily_rollup_total_calories(client, day):
                     yield point
+                day -= timedelta(days=1)
 
 
 async def send_to_open_wearables(url: str, user_id: str, api_key: str, payload: dict[str, Any]) -> None:
