@@ -96,6 +96,19 @@ def google_list_params(
     return params
 
 
+def google_rollup_body(
+    start: datetime, end: datetime, page_token: str | None = None
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "range": {"startTime": _rfc3339(start), "endTime": _rfc3339(end)},
+        "windowSize": "86400s",
+        "pageSize": 10000,
+    }
+    if page_token:
+        body["pageToken"] = page_token
+    return body
+
+
 class GoogleHealthClient:
     base_url = "https://health.googleapis.com/v4/users/me"
 
@@ -137,6 +150,50 @@ class GoogleHealthClient:
             if not page_token:
                 break
 
+    async def _rollup_total_calories(
+        self, client: httpx.AsyncClient, start: datetime, end: datetime
+    ) -> AsyncIterator[dict[str, Any]]:
+        page_token = None
+        while True:
+            response = None
+            for attempt in range(GOOGLE_MAX_ATTEMPTS):
+                response = await client.post(
+                    f"{self.base_url}/dataTypes/total-calories/dataPoints:rollUp",
+                    headers=self.headers,
+                    json=google_rollup_body(start, end, page_token),
+                )
+                if response.status_code != 429 and response.status_code < 500:
+                    break
+                if attempt + 1 < GOOGLE_MAX_ATTEMPTS:
+                    await asyncio.sleep(0.5 * (2**attempt))
+            assert response is not None
+            if response.is_error:
+                raise RuntimeError(
+                    "Google Health rejected total-calories rollup with HTTP "
+                    f"{response.status_code}: {response.text[:500]}"
+                )
+            payload = response.json()
+            for point in payload.get("rollupDataPoints", []):
+                value = point.get("totalCalories", {})
+                if "kcalSum" not in value:
+                    continue
+                yield {
+                    "name": (
+                        "users/me/dataTypes/total-calories/rollups/"
+                        f"{point.get('startTime', '')}"
+                    ),
+                    "totalCalories": {
+                        "kcal": value["kcalSum"],
+                        "interval": {
+                            "startTime": point.get("startTime"),
+                            "endTime": point.get("endTime"),
+                        },
+                    },
+                }
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+
     async def list_points(
         self,
         data_type: str,
@@ -153,8 +210,8 @@ class GoogleHealthClient:
             for window_start, window_end in total_calorie_windows(
                 start or TOTAL_CALORIES_HISTORY_START, final_end
             ):
-                async for point in self._list_window(
-                    client, data_type, window_start, window_end
+                async for point in self._rollup_total_calories(
+                    client, window_start, window_end
                 ):
                     yield point
 

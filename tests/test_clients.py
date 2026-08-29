@@ -6,6 +6,7 @@ import httpx
 from app.clients import (
     GoogleHealthClient,
     google_list_params,
+    google_rollup_body,
     google_time_filter,
     total_calorie_windows,
 )
@@ -35,6 +36,61 @@ def test_total_calories_includes_required_bounded_interval_filter() -> None:
         ),
         "pageToken": "next",
     }
+
+
+def test_total_calories_rollup_uses_daily_windows() -> None:
+    start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 14, tzinfo=timezone.utc)
+
+    assert google_rollup_body(start, end, "next") == {
+        "range": {
+            "startTime": "2026-08-01T00:00:00Z",
+            "endTime": "2026-08-14T00:00:00Z",
+        },
+        "windowSize": "86400s",
+        "pageSize": 10000,
+        "pageToken": "next",
+    }
+
+
+def test_total_calories_rollup_is_converted_to_metric_shape() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "rollupDataPoints": [{
+                "startTime": "2026-08-01T00:00:00Z",
+                "endTime": "2026-08-02T00:00:00Z",
+                "totalCalories": {"kcalSum": 2345.6},
+            }]
+        },
+        request=httpx.Request("POST", "https://health.googleapis.com"),
+    )
+
+    class FakeClient:
+        async def post(self, *args, **kwargs):
+            return response
+
+    async def collect():
+        client = GoogleHealthClient("token")
+        return [
+            point
+            async for point in client._rollup_total_calories(
+                FakeClient(),
+                datetime(2026, 8, 1, tzinfo=timezone.utc),
+                datetime(2026, 8, 2, tzinfo=timezone.utc),
+            )
+        ]
+
+    assert asyncio.run(collect()) == [{
+        "name": "users/me/dataTypes/total-calories/rollups/2026-08-01T00:00:00Z",
+        "totalCalories": {
+            "kcal": 2345.6,
+            "interval": {
+                "startTime": "2026-08-01T00:00:00Z",
+                "endTime": "2026-08-02T00:00:00Z",
+            },
+        },
+    }]
 
 
 def test_google_filters_cover_each_record_time_shape() -> None:
