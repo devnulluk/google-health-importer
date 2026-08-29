@@ -6,7 +6,7 @@ import httpx
 from app.clients import (
     GoogleHealthClient,
     google_list_params,
-    google_daily_rollup_body,
+    google_rollup_body,
     google_time_filter,
     total_calorie_days,
     total_calorie_windows,
@@ -40,12 +40,12 @@ def test_total_calories_includes_required_bounded_interval_filter() -> None:
 
 
 def test_total_calories_rollup_uses_daily_windows() -> None:
-    assert google_daily_rollup_body(datetime(2026, 8, 1).date(), "next") == {
+    assert google_rollup_body(datetime(2026, 8, 1).date(), "next") == {
         "range": {
-            "start": {"date": {"year": 2026, "month": 8, "day": 1}},
-            "end": {"date": {"year": 2026, "month": 8, "day": 2}},
+            "startTime": "2026-08-01T00:00:00Z",
+            "endTime": "2026-08-02T00:00:00Z",
         },
-        "windowSizeDays": 1,
+        "windowSize": "86400s",
         "pageSize": 10000,
         "pageToken": "next",
     }
@@ -72,7 +72,7 @@ def test_total_calories_rollup_is_converted_to_metric_shape() -> None:
         client = GoogleHealthClient("token")
         return [
             point
-            async for point in client._daily_rollup_total_calories(
+            async for point in client._rollup_total_calories(
                 FakeClient(),
                 datetime(2026, 8, 1).date(),
             )

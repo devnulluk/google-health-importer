@@ -83,10 +83,10 @@ sequenceDiagram
 The first successful sync imports authorised history from
 `GOOGLE_HISTORY_START_DATE`. Set it to the date the device or Google Health
 account began collecting useful data. Bounded data types such as Total Calories
-are fetched newest-first with Google's civil-time `dailyRollUp` operation.
-Only completed civil days are requested, so the newest total is yesterday's and
-today is picked up automatically after midnight. This avoids future-ended and
-physical-duration errors from the live API, while current data
+are fetched newest-first with Google's physical-time `rollUp` operation using
+UTC-midnight-aligned one-day windows. Only completed days are requested, so the
+newest total is yesterday's and today is picked up automatically after midnight.
+This satisfies the live API's otherwise undocumented alignment requirement, while current data
 arrives before older history. Other metrics use Google Health's record-specific
 time filters, avoiding enumeration outside the configured history or checkpoint
 window. Later runs use a ten-minute overlap. Stable record IDs make retries

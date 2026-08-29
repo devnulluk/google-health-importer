@@ -107,17 +107,12 @@ def google_list_params(
     return params
 
 
-def _civil_datetime(value: date) -> dict[str, Any]:
-    return {"date": {"year": value.year, "month": value.month, "day": value.day}}
-
-
-def google_daily_rollup_body(day: date, page_token: str | None = None) -> dict[str, Any]:
+def google_rollup_body(day: date, page_token: str | None = None) -> dict[str, Any]:
+    start = datetime.combine(day, time.min, tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
     body: dict[str, Any] = {
-        "range": {
-            "start": _civil_datetime(day),
-            "end": _civil_datetime(day + timedelta(days=1)),
-        },
-        "windowSizeDays": 1,
+        "range": {"startTime": _rfc3339(start), "endTime": _rfc3339(end)},
+        "windowSize": "86400s",
         "pageSize": 10000,
     }
     if page_token:
@@ -166,7 +161,7 @@ class GoogleHealthClient:
             if not page_token:
                 break
 
-    async def _daily_rollup_total_calories(
+    async def _rollup_total_calories(
         self, client: httpx.AsyncClient, day: date
     ) -> AsyncIterator[dict[str, Any]]:
         page_token = None
@@ -174,9 +169,9 @@ class GoogleHealthClient:
             response = None
             for attempt in range(GOOGLE_MAX_ATTEMPTS):
                 response = await client.post(
-                    f"{self.base_url}/dataTypes/total-calories/dataPoints:dailyRollUp",
+                    f"{self.base_url}/dataTypes/total-calories/dataPoints:rollUp",
                     headers=self.headers,
-                    json=google_daily_rollup_body(day, page_token),
+                    json=google_rollup_body(day, page_token),
                 )
                 if response.status_code != 429 and response.status_code < 500:
                     break
@@ -185,7 +180,7 @@ class GoogleHealthClient:
             assert response is not None
             if response.is_error:
                 raise RuntimeError(
-                    "Google Health rejected total-calories daily rollup with HTTP "
+                    "Google Health rejected total-calories rollup with HTTP "
                     f"{response.status_code}: {response.text[:500]}"
                 )
             payload = response.json()
@@ -230,7 +225,7 @@ class GoogleHealthClient:
             # would make the exclusive end tomorrow (a future-ended range),
             # which the live API reports as INVALID_ROLLUP_QUERY_DURATION.
             for day in total_calorie_days(history_start, final_end):
-                async for point in self._daily_rollup_total_calories(client, day):
+                async for point in self._rollup_total_calories(client, day):
                     yield point
 
 
