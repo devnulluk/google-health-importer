@@ -63,13 +63,13 @@ def test_google_filters_cover_each_record_time_shape() -> None:
     )
 
 
-def test_total_calories_history_is_split_into_fourteen_day_windows() -> None:
+def test_total_calories_history_uses_safe_thirteen_day_windows() -> None:
     start = datetime(2026, 8, 1, tzinfo=timezone.utc)
     end = datetime(2026, 8, 16, tzinfo=timezone.utc)
 
     assert total_calorie_windows(start, end) == [
-        (datetime(2026, 8, 2, tzinfo=timezone.utc), end),
-        (start, datetime(2026, 8, 2, tzinfo=timezone.utc)),
+        (datetime(2026, 8, 3, tzinfo=timezone.utc), end),
+        (start, datetime(2026, 8, 3, tzinfo=timezone.utc)),
     ]
 
 

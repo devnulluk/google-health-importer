@@ -6,7 +6,9 @@ import httpx
 
 
 TOTAL_CALORIES_HISTORY_START = datetime(2009, 1, 1, tzinfo=timezone.utc)
-TOTAL_CALORIES_WINDOW = timedelta(days=14)
+# Google's documented limit is 14 days, but requests spanning exactly 14 days
+# can be rejected once sub-second timestamps are involved. Keep a safety margin.
+TOTAL_CALORIES_WINDOW = timedelta(days=13)
 GOOGLE_MAX_ATTEMPTS = 5
 
 SAMPLE_TYPES = {
@@ -123,7 +125,11 @@ class GoogleHealthClient:
             assert response is not None
             if response.status_code == 403 and "MISSING_OAUTH_SCOPE" in response.text:
                 return
-            response.raise_for_status()
+            if response.is_error:
+                raise RuntimeError(
+                    f"Google Health rejected {data_type} with HTTP "
+                    f"{response.status_code}: {response.text[:500]}"
+                )
             payload = response.json()
             for point in payload.get("dataPoints", []):
                 yield point
