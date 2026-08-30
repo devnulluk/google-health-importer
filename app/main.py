@@ -35,7 +35,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Google Health Importer", docs_url=None, redoc_url=None, lifespan=lifespan)
 basic = HTTPBasic()
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 SCOPES = " ".join([
     "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
@@ -377,30 +377,49 @@ async def rebuild_dashboard_history() -> dict[str, object]:
     client = GoogleHealthClient(await access_token(str(token)))
     counts: dict[str, int] = {}
 
-    async def record(data_type: str, item: dict) -> None:
-        counts[data_type] = counts.get(data_type, 0) + 1
-        update_dashboard_data(saved, data_type, [item], end)
+    def record_batch(data_type: str, items: list[dict]) -> None:
+        if not items:
+            return
+        counts[data_type] = counts.get(data_type, 0) + len(items)
+        update_dashboard_data(saved, data_type, items, end)
 
     for data_type in METRICS:
         saved["dashboard_rebuild"]["data_type"] = data_type
         store().save(saved)
+        batch: list[dict] = []
         async for point in client.list_points(data_type, history_start, end):
             mapped = metric_record(data_type, point)
             if mapped:
-                await record(data_type, mapped)
+                batch.append(mapped)
+                if len(batch) >= settings.sync_batch_size:
+                    record_batch(data_type, batch)
+                    batch = []
+        record_batch(data_type, batch)
+        store().save(saved)
 
     saved["dashboard_rebuild"]["data_type"] = "sleep"
     store().save(saved)
+    batch = []
     async for point in client.list_points("sleep", history_start, end):
         for item in sleep_records(point):
-            await record("sleep-stages", item)
+            batch.append(item)
+            if len(batch) >= settings.sync_batch_size:
+                record_batch("sleep-stages", batch)
+                batch = []
+    record_batch("sleep-stages", batch)
+    store().save(saved)
 
     saved["dashboard_rebuild"]["data_type"] = "exercise"
     store().save(saved)
+    batch = []
     async for point in client.list_points("exercise", history_start, end):
         mapped = workout_record(point)
         if mapped:
-            await record("exercise", mapped)
+            batch.append(mapped)
+            if len(batch) >= settings.sync_batch_size:
+                record_batch("exercise", batch)
+                batch = []
+    record_batch("exercise", batch)
 
     saved["dashboard_rebuild"] = {
         "status": "complete", "started_at": end.isoformat(),
