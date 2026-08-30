@@ -22,6 +22,19 @@ The authenticated status includes:
 - historical-backfill state;
 - current and most recent successful sync summaries;
 - records sent and first/last observed timestamps by data type.
+- the latest available value and timestamp for each category;
+- animated numeric series covering the latest 24 hours.
+
+Run authenticated `POST /dashboard/rebuild` after first deploying dashboard
+history support. It reads Google history without resending it to Open Wearables.
+The operation may take several minutes, particularly for daily calorie rollups.
+
+## Notifications
+
+Set `APPRISE_URLS` to one or more whitespace-separated Apprise service URLs.
+After the configured consecutive-failure threshold, the importer sends one
+failure notification. It sends a recovery notification after the next successful
+run. Messages contain no health measurements or credentials.
 
 `records_sent` is a transfer count, not a unique-record count. The importer uses
 a ten-minute checkpoint overlap and stable identifiers, so safe retries may send
@@ -71,4 +84,3 @@ retained and other data types continue.
 If a run fails repeatedly, capture the status, failing data type, HTTP status and
 error reason. Do not copy OAuth codes, tokens, API keys or health values into an
 issue or public log.
-

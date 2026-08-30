@@ -7,6 +7,8 @@ container builds obtain them from their normal distribution channels.
 | Project | Licence |
 | --- | --- |
 | Open Wearables | MIT |
+| Apprise | MIT |
+| Chart.js (loaded by the authenticated dashboard from jsDelivr) | MIT |
 | FastAPI | MIT |
 | HTTPX | BSD 3-Clause |
 | Pydantic and pydantic-settings | MIT |

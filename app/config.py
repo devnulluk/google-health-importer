@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     google_history_start_date: date = date(2009, 1, 1)
     sync_interval_minutes: int = 15
     sync_batch_size: int = 1000
+    apprise_urls: SecretStr | None = None
+    notification_failure_threshold: int = 2
     state_path: str = "/data/state.json"
 
 

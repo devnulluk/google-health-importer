@@ -170,6 +170,7 @@ HTTP Basic credentials:
 | `GET /health` | Liveness check | No |
 | `GET /status` | Connection and aggregate progress | Yes |
 | `GET /status/view` | Human-readable status and coverage dashboard | Yes |
+| `POST /dashboard/rebuild` | Reconstruct historical coverage, latest values and 24-hour charts | Yes |
 | `POST /sync` | Start a non-overlapping sync | Yes |
 | `POST /disconnect` | Revoke Google access and erase importer state | Yes |
 
@@ -200,10 +201,15 @@ The repository also includes an operator-facing
 
 ## Operations and recovery
 
-The authenticated status dashboard reports connection, scheduler, backfill and
-per-category transfer coverage without exposing measurement values. Transfer
-counts may include safe checkpoint-overlap retries and are not unique-record
-counts.
+The authenticated status dashboard reports connection, scheduler, historical
+coverage, each available category's latest value and animated 24-hour charts.
+`POST /dashboard/rebuild` reconstructs those summaries from Google without
+resending records to Open Wearables. The encrypted state retains only the latest
+value and a bounded 24-hour chart series, not a second full health database.
+
+Optional Apprise notifications report repeated sync failures and recovery.
+Configure one or more whitespace-separated notification URLs in `APPRISE_URLS`;
+notification messages contain operational state but no readings.
 
 - [Operations and monitoring](docs/OPERATIONS.md)
 - [Backup and recovery](docs/BACKUP_AND_RECOVERY.md)

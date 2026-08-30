@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from cryptography.fernet import Fernet
 
 from app.config import get_settings
-from app.main import status_summary, status_view, update_coverage
+from app.main import status_summary, status_view, update_coverage, update_dashboard_data
 
 
 def configure(monkeypatch) -> None:
@@ -105,3 +105,19 @@ def test_status_view_renders_coverage_without_measurements(monkeypatch) -> None:
     assert "must-not-leak" not in page
     assert "Automatically refreshes every minute" in page
     get_settings.cache_clear()
+
+
+def test_dashboard_data_tracks_latest_and_only_last_24_hours() -> None:
+    state: dict[str, object] = {}
+    observed = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    update_dashboard_data(state, "heart-rate", [
+        {"startDate": "2026-08-29T11:00:00Z", "value": 60, "unit": "bpm"},
+        {"startDate": "2026-08-30T10:00:00Z", "value": 72, "unit": "bpm"},
+        {"startDate": "2026-08-30T11:00:00Z", "value": 75, "unit": "bpm"},
+    ], observed)
+
+    assert state["latest"]["heart-rate"] == {  # type: ignore[index]
+        "timestamp": "2026-08-30T11:00:00Z", "value": 75, "unit": "bpm"
+    }
+    assert [point["value"] for point in state["series_24h"]["heart-rate"]] == [72.0, 75.0]  # type: ignore[index]
+    assert state["coverage"]["heart-rate"]["records_observed"] == 3  # type: ignore[index]
