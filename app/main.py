@@ -35,7 +35,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Google Health Importer", docs_url=None, redoc_url=None, lifespan=lifespan)
 basic = HTTPBasic()
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 SCOPES = " ".join([
     "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
@@ -155,17 +155,25 @@ def status_view() -> str:
         )
     status_name = html.escape(str(sync.get("status", "idle")))
     current_type = html.escape(str(sync.get("data_type") or "—"))
-    chart_data = json.dumps(series, separators=(",", ":")).replace("<", "\\u003c")
+    chart_series = {
+        name: points for name, points in series.items()
+        if isinstance(points, list) and len(points) >= 2
+    }
+    chart_data = json.dumps(chart_series, separators=(",", ":")).replace("<", "\\u003c")
+    chart_options = "".join(
+        f'<option value="{html.escape(str(name), quote=True)}">{html.escape(str(name).replace("-", " "))}</option>'
+        for name in sorted(chart_series)
+    )
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Importer status</title><style>
 body{{font:15px/1.5 system-ui,sans-serif;margin:0;background:#f4f7fb;color:#172033}}main{{max-width:1050px;margin:2rem auto;padding:0 1rem}}
 h1{{color:#155eef}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:1rem}}
 .card,table{{background:white;border-radius:14px;box-shadow:0 6px 24px #14213d12}}.card{{padding:1rem 1.2rem}}
 .label{{color:#667085;font-size:.85rem}}.value{{font-size:1.15rem;font-weight:650;overflow-wrap:anywhere}}
-table{{width:100%;border-collapse:collapse;margin-top:1.5rem;overflow:hidden}}th,td{{padding:.7rem;text-align:left;border-bottom:1px solid #e7ebf2}}
+table{{width:100%;border-collapse:collapse;min-width:850px}}.table-wrap{{overflow-x:auto;margin-top:1.5rem;border-radius:14px;box-shadow:0 6px 24px #14213d12}}th,td{{padding:.7rem;text-align:left;border-bottom:1px solid #e7ebf2}}
 th{{background:#eef3ff}}code{{background:#eef3ff;padding:.12rem .3rem;border-radius:.25rem}}a{{color:#155eef}}
-.charts{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem;margin-top:1.5rem}}.chart{{background:white;padding:1rem;border-radius:14px;box-shadow:0 6px 24px #14213d12;min-height:260px}}
+.chart{{background:white;padding:1rem;margin-top:1.5rem;border-radius:14px;box-shadow:0 6px 24px #14213d12;height:360px}}select,button{{font:inherit;padding:.6rem .8rem;border:1px solid #cbd5e1;border-radius:.6rem;background:white}}button{{cursor:pointer;color:#155eef}}.controls{{display:flex;gap:.7rem;align-items:center;flex-wrap:wrap;margin-top:1.5rem}}@media(max-width:600px){{main{{margin:1rem auto}}.chart{{height:300px}}h1{{font-size:1.65rem}}}}
 </style></head><body><main><h1>Google Health importer</h1>
 <div class="grid">
 <div class="card"><div class="label">Connection</div><div class="value">{'Connected' if summary['connected'] else 'Disconnected'}</div></div>
@@ -174,17 +182,16 @@ th{{background:#eef3ff}}code{{background:#eef3ff;padding:.12rem .3rem;border-rad
 <div class="card"><div class="label">Historical backfill</div><div class="value">{'Complete' if summary['expanded_backfill_complete'] else 'Pending'}</div></div>
 <div class="card"><div class="label">Last checkpoint</div><div class="value">{html.escape(str(summary['last_sync'] or 'Never'))}</div></div>
 <div class="card"><div class="label">Schedule</div><div class="value">Every {int(summary['sync_interval_minutes'])} minutes</div></div>
-</div><table><thead><tr><th>Data type</th><th>Observed</th><th>Latest</th><th>Latest timestamp</th><th>First observed</th><th>Last observed</th></tr></thead>
-<tbody>{''.join(rows) or '<tr><td colspan="6">Run the historical dashboard rebuild to calculate coverage.</td></tr>'}</tbody></table>
-<div id="charts" class="charts"></div>
+</div><div class="table-wrap"><table><thead><tr><th>Data type</th><th>Observed</th><th>Latest</th><th>Latest timestamp</th><th>First observed</th><th>Last observed</th></tr></thead>
+<tbody>{''.join(rows) or '<tr><td colspan="6">Run the historical dashboard rebuild to calculate coverage.</td></tr>'}</tbody></table></div>
+<div class="controls"><label for="metric">24-hour chart</label><select id="metric">{chart_options}</select><button type="button" onclick="location.reload()">Refresh data</button></div>
+<section class="chart"><canvas id="metric-chart"></canvas></section>
 <p><small>Observed counts are reconstructed from Google and may include source revisions. Charts contain only the latest 24 hours and animate when drawn.</small></p>
-<p><a href="/status">JSON status</a> · Automatically refreshes every minute.</p>
+<p><a href="/status">JSON status</a> · Use “Refresh data” when you want the latest snapshot.</p>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script><script>
-const series={chart_data}; const host=document.getElementById('charts');
-for(const [name,points] of Object.entries(series)){{if(!Array.isArray(points)||!points.length)continue;
- const card=document.createElement('section');card.className='chart';const title=document.createElement('h2');title.textContent=name.replaceAll('-',' ');const canvas=document.createElement('canvas');card.append(title,canvas);host.append(card);
- new Chart(canvas,{{type:'line',data:{{labels:points.map(p=>new Date(p.timestamp).toLocaleTimeString([],{{hour:'2-digit',minute:'2-digit'}})),datasets:[{{label:points[0].unit||name,data:points.map(p=>p.value),borderColor:'#155eef',backgroundColor:'#155eef18',fill:true,tension:.35,pointRadius:0,borderWidth:2}}]}},options:{{responsive:true,maintainAspectRatio:false,animation:{{duration:1600,easing:'easeOutQuart'}},plugins:{{legend:{{display:false}}}},scales:{{x:{{ticks:{{maxTicksLimit:8}}}},y:{{beginAtZero:false}}}}}}}});
-}}
+const series={chart_data};const picker=document.getElementById('metric');const canvas=document.getElementById('metric-chart');let chart;
+function draw(name){{const points=series[name]||[];if(chart)chart.destroy();chart=new Chart(canvas,{{type:'line',data:{{labels:points.map(p=>new Date(p.timestamp).toLocaleTimeString([],{{hour:'2-digit',minute:'2-digit'}})),datasets:[{{label:(points[0]&&points[0].unit)||name,data:points.map(p=>p.value),borderColor:'#155eef',backgroundColor:'#155eef18',fill:true,tension:.35,pointRadius:0,borderWidth:2}}]}},options:{{responsive:true,maintainAspectRatio:false,animation:{{duration:1100,easing:'easeOutQuart'}},plugins:{{legend:{{display:false}},title:{{display:true,text:name.replaceAll('-',' ')}}}},scales:{{x:{{ticks:{{maxTicksLimit:6}}}},y:{{beginAtZero:false}}}}}}}})}}
+if(picker&&picker.options.length){{picker.addEventListener('change',()=>draw(picker.value));draw(picker.value)}}
 </script></main></body></html>"""
 
 
@@ -350,7 +357,11 @@ def update_dashboard_data(
             continue
         if parsed >= cutoff:
             points[timestamp] = {"timestamp": timestamp, "value": numeric, "unit": item.get("unit")}
-    series_map[data_type] = [points[key] for key in sorted(points)[-2000:]]
+    ordered = [points[key] for key in sorted(points)]
+    if len(ordered) > 288:
+        step = (len(ordered) - 1) / 287
+        ordered = [ordered[round(index * step)] for index in range(288)]
+    series_map[data_type] = ordered
 
 
 async def rebuild_dashboard_history() -> dict[str, object]:

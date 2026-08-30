@@ -203,6 +203,8 @@ The repository also includes an operator-facing
 
 The authenticated status dashboard reports connection, scheduler, historical
 coverage, each available category's latest value and animated 24-hour charts.
+The mobile-friendly chart selector draws one bounded series at a time and avoids
+full-page automatic reloads.
 `POST /dashboard/rebuild` reconstructs those summaries from Google without
 resending records to Open Wearables. The encrypted state retains only the latest
 value and a bounded 24-hour chart series, not a second full health database.

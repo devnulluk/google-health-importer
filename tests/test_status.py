@@ -103,7 +103,9 @@ def test_status_view_renders_coverage_without_measurements(monkeypatch) -> None:
     assert "sleep-stages" in page
     assert "1,373" in page
     assert "must-not-leak" not in page
-    assert "Automatically refreshes every minute" in page
+    assert "Refresh data" in page
+    assert 'id="metric-chart"' in page
+    assert "http-equiv=\"refresh\"" not in page
     get_settings.cache_clear()
 
 
