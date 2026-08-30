@@ -35,7 +35,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Google Health Importer", docs_url=None, redoc_url=None, lifespan=lifespan)
 basic = HTTPBasic()
-APP_VERSION = "0.4.2"
+APP_VERSION = "0.5.0"
 SCOPES = " ".join([
     "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
@@ -121,6 +121,7 @@ def status_summary(state: dict[str, object]) -> dict[str, object]:
         "series_24h": state.get("series_24h", {}),
         "dashboard_rebuild": state.get("dashboard_rebuild"),
         "notifications": state.get("notifications", {}),
+        "data_freshness": state.get("data_freshness", {"status": "unknown"}),
     }
 
 
@@ -134,6 +135,7 @@ def status() -> dict[str, object]:
 def status_view() -> str:
     summary = status_summary(store().load())
     sync = summary["sync"] if isinstance(summary["sync"], dict) else {}
+    freshness = summary["data_freshness"] if isinstance(summary["data_freshness"], dict) else {}
     coverage = summary["coverage"] if isinstance(summary["coverage"], dict) else {}
     latest = summary["latest"] if isinstance(summary["latest"], dict) else {}
     series = summary["series_24h"] if isinstance(summary["series_24h"], dict) else {}
@@ -182,6 +184,7 @@ th{{background:#eef3ff}}code{{background:#eef3ff;padding:.12rem .3rem;border-rad
 <div class="card"><div class="label">Historical backfill</div><div class="value">{'Complete' if summary['expanded_backfill_complete'] else 'Pending'}</div></div>
 <div class="card"><div class="label">Last checkpoint</div><div class="value">{html.escape(str(summary['last_sync'] or 'Never'))}</div></div>
 <div class="card"><div class="label">Schedule</div><div class="value">Every {int(summary['sync_interval_minutes'])} minutes</div></div>
+<div class="card"><div class="label">Source data</div><div class="value">{html.escape(str(freshness.get('status', 'unknown')).title())}</div></div>
 </div><div class="table-wrap"><table><thead><tr><th>Data type</th><th>Observed</th><th>Latest</th><th>Latest timestamp</th><th>First observed</th><th>Last observed</th></tr></thead>
 <tbody>{''.join(rows) or '<tr><td colspan="6">Run the historical dashboard rebuild to calculate coverage.</td></tr>'}</tbody></table></div>
 <div class="controls"><label for="metric">24-hour chart</label><select id="metric">{chart_options}</select><button type="button" onclick="location.reload()">Refresh data</button></div>
@@ -323,6 +326,7 @@ def update_dashboard_data(
     earliest, latest = min(x[0] for x in dated), max(x[0] for x in dated)
     entry["first_seen_at"] = min(str(entry.get("first_seen_at") or earliest), earliest)
     entry["last_seen_at"] = max(str(entry.get("last_seen_at") or latest), latest)
+    saved["last_data_seen_at"] = max(str(saved.get("last_data_seen_at") or latest), latest)
 
     latest_map = saved.setdefault("latest", {})
     assert isinstance(latest_map, dict)
@@ -462,6 +466,50 @@ async def send_notification(title: str, body: str, kind: str = "info") -> bool:
         return bool(notifier.notify(title=title, body=body, notify_type=notify_type))
 
     return await asyncio.to_thread(notify)
+
+
+async def check_data_freshness(saved: dict[str, object], now: datetime) -> None:
+    """Notify once when the whole upstream pipeline becomes stale or recovers."""
+    settings = get_settings()
+    previous = saved.get("data_freshness", {})
+    previous_status = previous.get("status") if isinstance(previous, dict) else None
+    last_value = saved.get("last_data_seen_at")
+    last_seen: datetime | None = None
+    if isinstance(last_value, str):
+        try:
+            last_seen = datetime.fromisoformat(last_value.replace("Z", "+00:00"))
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    threshold = timedelta(hours=max(settings.data_stale_after_hours, 1))
+    current_status = "fresh" if last_seen and now - last_seen <= threshold else "stale"
+    if current_status == "stale" and previous_status != "stale":
+        sent = await send_notification(
+            "Personal health data has gone quiet",
+            f"The importer is running, but no new source data has arrived for at least {max(settings.data_stale_after_hours, 1)} hours.",
+            "warning",
+        )
+        saved["notifications"] = {
+            "last_type": "data-stale", "last_sent": sent,
+            "last_attempt_at": now.isoformat(),
+        }
+    elif current_status == "fresh" and previous_status == "stale":
+        sent = await send_notification(
+            "Personal health data is flowing again",
+            "Fresh source data has arrived after the pipeline-staleness alert.",
+            "success",
+        )
+        saved["notifications"] = {
+            "last_type": "data-fresh", "last_sent": sent,
+            "last_attempt_at": now.isoformat(),
+        }
+    saved["data_freshness"] = {
+        "status": current_status,
+        "checked_at": now.isoformat(),
+        "last_data_at": last_value,
+        "stale_after_hours": max(settings.data_stale_after_hours, 1),
+    }
 
 
 async def send_batch(
@@ -609,6 +657,7 @@ async def guarded_sync() -> dict[str, int | str]:
             result = await run_sync()
             saved = store().load()
             saved["consecutive_failures"] = 0
+            await check_data_freshness(saved, datetime.now(timezone.utc))
             if was_failing:
                 sent = await send_notification(
                     "Personal health import recovered",

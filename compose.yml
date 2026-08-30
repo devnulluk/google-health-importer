@@ -18,6 +18,7 @@ services:
       SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-1000}
       APPRISE_URLS: ${APPRISE_URLS:-}
       NOTIFICATION_FAILURE_THRESHOLD: ${NOTIFICATION_FAILURE_THRESHOLD:-2}
+      DATA_STALE_AFTER_HOURS: ${DATA_STALE_AFTER_HOURS:-6}
     volumes:
       - google_health_importer_data:/data
     ports:

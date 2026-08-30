@@ -1,9 +1,16 @@
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
 
 from cryptography.fernet import Fernet
 
 from app.config import get_settings
-from app.main import status_summary, status_view, update_coverage, update_dashboard_data
+from app.main import (
+    check_data_freshness,
+    status_summary,
+    status_view,
+    update_coverage,
+    update_dashboard_data,
+)
 
 
 def configure(monkeypatch) -> None:
@@ -123,3 +130,29 @@ def test_dashboard_data_tracks_latest_and_only_last_24_hours() -> None:
     }
     assert [point["value"] for point in state["series_24h"]["heart-rate"]] == [72.0, 75.0]  # type: ignore[index]
     assert state["coverage"]["heart-rate"]["records_observed"] == 3  # type: ignore[index]
+
+
+def test_freshness_notifies_once_and_then_on_recovery(monkeypatch) -> None:
+    configure(monkeypatch)
+    messages = []
+
+    async def fake_notify(title: str, body: str, kind: str = "info") -> bool:
+        messages.append((title, body, kind))
+        return True
+
+    monkeypatch.setattr("app.main.send_notification", fake_notify)
+    now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    state: dict[str, object] = {
+        "last_data_seen_at": (now - timedelta(hours=7)).isoformat()
+    }
+
+    asyncio.run(check_data_freshness(state, now))
+    asyncio.run(check_data_freshness(state, now + timedelta(minutes=5)))
+    assert state["data_freshness"]["status"] == "stale"  # type: ignore[index]
+    assert len(messages) == 1
+
+    state["last_data_seen_at"] = (now + timedelta(minutes=6)).isoformat()
+    asyncio.run(check_data_freshness(state, now + timedelta(minutes=10)))
+    assert state["data_freshness"]["status"] == "fresh"  # type: ignore[index]
+    assert [message[2] for message in messages] == ["warning", "success"]
+    get_settings.cache_clear()

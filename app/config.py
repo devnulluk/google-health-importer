@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     sync_batch_size: int = 1000
     apprise_urls: SecretStr | None = None
     notification_failure_threshold: int = 2
+    data_stale_after_hours: int = 6
     state_path: str = "/data/state.json"
 
 

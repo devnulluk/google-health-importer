@@ -212,6 +212,9 @@ value and a bounded 24-hour chart series, not a second full health database.
 Optional Apprise notifications report repeated sync failures and recovery.
 Configure one or more whitespace-separated notification URLs in `APPRISE_URLS`;
 notification messages contain operational state but no readings.
+The importer also detects a healthy-but-stale pipeline: if no source record has
+arrived for `DATA_STALE_AFTER_HOURS` (six hours by default), it sends one warning
+and then a recovery notification when fresh data returns.
 
 - [Operations and monitoring](docs/OPERATIONS.md)
 - [Backup and recovery](docs/BACKUP_AND_RECOVERY.md)

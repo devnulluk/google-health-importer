@@ -36,6 +36,12 @@ After the configured consecutive-failure threshold, the importer sends one
 failure notification. It sends a recovery notification after the next successful
 run. Messages contain no health measurements or credentials.
 
+A separate freshness check runs after every successful import. If the newest
+source timestamp is older than `DATA_STALE_AFTER_HOURS` (default: six), it sends
+one warning even though the importer itself is healthy. A single recovery notice
+is sent when fresh records resume. This detects phone, Fitbit, Google and other
+upstream pipeline gaps that an HTTP failure check cannot see.
+
 `records_sent` is a transfer count, not a unique-record count. The importer uses
 a ten-minute checkpoint overlap and stable identifiers, so safe retries may send
 the same record again. Coverage never contains measurement values.
