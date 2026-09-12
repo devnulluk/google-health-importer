@@ -11,6 +11,7 @@ TOTAL_CALORIES_HISTORY_START = datetime(2009, 1, 1, tzinfo=timezone.utc)
 # are reliable and still keep a bounded user-selected history.
 TOTAL_CALORIES_WINDOW = timedelta(days=1)
 GOOGLE_MAX_ATTEMPTS = 5
+OPEN_WEARABLES_MAX_ATTEMPTS = 5
 
 
 class TotalCaloriesHistoryLimit(Exception):
@@ -244,7 +245,18 @@ class GoogleHealthClient:
 async def send_to_open_wearables(url: str, user_id: str, api_key: str, payload: dict[str, Any]) -> None:
     headers = {"X-Open-Wearables-API-Key": api_key}
     async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(f"{url.rstrip('/')}/api/v1/sdk/users/{user_id}/sync", json=payload, headers=headers)
+        response = None
+        for attempt in range(OPEN_WEARABLES_MAX_ATTEMPTS):
+            response = await client.post(
+                f"{url.rstrip('/')}/api/v1/sdk/users/{user_id}/sync",
+                json=payload,
+                headers=headers,
+            )
+            if response.status_code != 429 and response.status_code < 500:
+                break
+            if attempt + 1 < OPEN_WEARABLES_MAX_ATTEMPTS:
+                await asyncio.sleep(0.5 * (2**attempt))
+        assert response is not None
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

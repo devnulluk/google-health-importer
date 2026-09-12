@@ -8,8 +8,8 @@ health readings.
 Both status routes require the same HTTP Basic credentials as the sync and
 disconnect controls.
 
-- `GET /status/view` — human-readable status and coverage table; refreshes once
-  per minute.
+- `GET /status/view` — human-readable status and coverage table; use the
+  **Refresh data** control to load a new snapshot.
 - `GET /status` — JSON status for monitoring and automation.
 - `GET /health` — unauthenticated liveness only. A successful liveness response
   does not prove that Google is connected or that a sync has completed.
@@ -81,6 +81,8 @@ retained and other data types continue.
 
 - Transient Google `429` and `5xx` responses are retried with exponential
   backoff.
+- Transient Open Wearables upload `429` and `5xx` responses are retried with
+  exponential backoff (up to five attempts).
 - Scheduled failures back off up to six hours; a later successful run returns
   to the configured interval.
 - Runs do not overlap.

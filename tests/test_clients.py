@@ -11,6 +11,7 @@ from app.clients import (
     google_time_filter,
     total_calorie_days,
     total_calorie_windows,
+    send_to_open_wearables,
 )
 
 
@@ -219,3 +220,62 @@ def test_google_server_error_is_retried(monkeypatch) -> None:
 
     assert asyncio.run(collect_points()) == [{"name": "point-1"}]
     assert fake.calls == 2
+
+
+def test_open_wearables_transient_error_is_retried(monkeypatch) -> None:
+    responses = [
+        httpx.Response(503, request=httpx.Request("POST", "https://wearables.example")),
+        httpx.Response(429, request=httpx.Request("POST", "https://wearables.example")),
+        httpx.Response(204, request=httpx.Request("POST", "https://wearables.example")),
+    ]
+
+    class FakeClient:
+        calls = 0
+
+        async def post(self, *args, **kwargs):
+            response = responses[self.calls]
+            self.calls += 1
+            return response
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr("app.clients.httpx.AsyncClient", lambda **kwargs: _AsyncClientContext(FakeClient()))
+    monkeypatch.setattr("app.clients.asyncio.sleep", no_sleep)
+    asyncio.run(send_to_open_wearables("https://wearables.example", "user", "key", {}))
+
+
+class _AsyncClientContext:
+    def __init__(self, client):
+        self.client = client
+
+    async def __aenter__(self):
+        return self.client
+
+    async def __aexit__(self, *args):
+        return None
+
+
+def test_open_wearables_permanent_error_is_not_retried(monkeypatch) -> None:
+    response = httpx.Response(
+        400,
+        json={"detail": "invalid payload"},
+        request=httpx.Request("POST", "https://wearables.example"),
+    )
+
+    class FakeClient:
+        calls = 0
+
+        async def post(self, *args, **kwargs):
+            self.calls += 1
+            return response
+
+    fake = FakeClient()
+    monkeypatch.setattr("app.clients.httpx.AsyncClient", lambda **kwargs: _AsyncClientContext(fake))
+    try:
+        asyncio.run(send_to_open_wearables("https://wearables.example", "user", "key", {}))
+    except RuntimeError as exc:
+        assert "HTTP 400" in str(exc)
+    else:
+        raise AssertionError("permanent upload error should be raised")
+    assert fake.calls == 1
